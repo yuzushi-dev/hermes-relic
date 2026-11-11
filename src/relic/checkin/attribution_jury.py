@@ -27,11 +27,9 @@ the vote aggregator); the validator keeps its own DB/CLI orchestration.
 """
 from __future__ import annotations
 
-import itertools
 import json
 import os
 import re
-import threading
 import urllib.request
 from collections import Counter
 from pathlib import Path
@@ -45,23 +43,22 @@ _IS_CLOUD = "ollama.com" in ENDPOINT
 
 
 def _load_keys() -> list[str]:
-    """API keys for the cloud endpoint, from OLLAMA_API_KEYS (comma separated) only."""
-    env = os.environ.get("OLLAMA_API_KEYS", "").strip()
+    """Cloud API keys from the caller's active Hermes secret scope."""
+    from relic.secrets import secret_value
+
+    env = secret_value("OLLAMA_API_KEYS")
     keys = [k.strip() for k in env.split(",") if k.strip()]
     seen: set[str] = set()
     return [k for k in keys if not (k in seen or seen.add(k))]
 
 
-_KEYS = _load_keys()
-_key_cycle = itertools.cycle(_KEYS) if _KEYS else None
-_key_lock = threading.Lock()
-
-
 def _next_key() -> str | None:
-    if _key_cycle is None:
-        return None
-    with _key_lock:
-        return next(_key_cycle)
+    # Do not cache credentials or cycles globally: this module is shared by
+    # multiplexed profiles. Rotation must never retain another profile's keys.
+    import secrets
+
+    keys = _load_keys()
+    return secrets.choice(keys) if keys else None
 
 
 # Cross-family panel: each entry is (model, prompt_template). Distinct model

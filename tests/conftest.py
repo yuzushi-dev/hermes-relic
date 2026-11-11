@@ -1,6 +1,18 @@
 from __future__ import annotations
 
 import pytest
+import sys
+import types
+
+
+@pytest.fixture
+def scoped_secrets(monkeypatch):
+    """A synthetic active Hermes scope, isolated from ambient credentials."""
+    values = {}
+    module = types.ModuleType("agent.secret_scope")
+    module.get_secret = lambda name, default=None: values.get(name, default)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", module)
+    return values
 
 
 @pytest.fixture

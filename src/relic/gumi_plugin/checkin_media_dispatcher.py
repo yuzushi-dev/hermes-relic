@@ -173,15 +173,19 @@ def _get_api_key() -> Optional[str]:
     """
     if os.environ.get("RELIC_ENABLE_GOOGLE_MEDIA") != "1":
         return None
-    return os.environ.get("GEMINI_API_KEY")
+    from relic.secrets import secret_value
+
+    return secret_value("GEMINI_API_KEY") or None
 
 
 _DELIVERY_ENV_NAMES = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_HOME_CHANNEL", "TELEGRAM_ALLOWED_USERS")
 
 
 def _load_env(hermes_home: Path) -> dict[str, str]:
-    """Delivery settings from the process environment; the profile .env is never parsed here."""
-    return {name: os.environ[name] for name in _DELIVERY_ENV_NAMES if os.environ.get(name)}
+    """Delivery settings from the active Hermes scope; never parse credential files."""
+    from relic.secrets import secret_value
+
+    return {name: value for name in _DELIVERY_ENV_NAMES if (value := secret_value(name))}
 
 
 def _load_canonical_user_profile(relic_user_home: Path):
@@ -235,7 +239,7 @@ def _send_telegram_media(
     import urllib.request
 
     env = _load_env(hermes_home)
-    bot_token = env.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
+    bot_token = env.get("TELEGRAM_BOT_TOKEN")
     chat_id = env.get("TELEGRAM_HOME_CHANNEL") or env.get("TELEGRAM_ALLOWED_USERS")
 
     if not bot_token or not chat_id:
@@ -334,7 +338,7 @@ def _send_telegram_text(hermes_home: Path, text: str) -> bool:
     import urllib.request
 
     env = _load_env(hermes_home)
-    bot_token = env.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
+    bot_token = env.get("TELEGRAM_BOT_TOKEN")
     chat_id = env.get("TELEGRAM_HOME_CHANNEL") or env.get("TELEGRAM_ALLOWED_USERS")
 
     if not bot_token or not chat_id:

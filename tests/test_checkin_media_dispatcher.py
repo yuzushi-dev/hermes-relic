@@ -13,6 +13,11 @@ from relic.profile.registry import ProfileRegistry
 _VALID_TELEGRAM_TOKEN = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
 
 
+@pytest.fixture(autouse=True)
+def media_credentials(scoped_secrets):
+    scoped_secrets["GEMINI_API_KEY"] = "test-google-key"
+
+
 def _write_user_state(
     tmp_path: Path,
     *,

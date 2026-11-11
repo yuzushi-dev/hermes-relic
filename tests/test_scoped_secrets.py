@@ -33,6 +33,26 @@ def test_secret_unavailable_fails_closed(monkeypatch, failure):
     assert secret_value("GEMINI_API_KEY") == ""
 
 
+def test_runtime_consumers_resolve_active_scope_each_call(monkeypatch, tmp_path):
+    from relic.checkin import attribution_jury as jury
+    from relic.gumi_plugin import checkin_media_dispatcher as dispatcher
+
+    values = {"GEMINI_API_KEY": "test-google", "TELEGRAM_BOT_TOKEN": "test-token", "OLLAMA_API_KEYS": "test-one,test-two,test-one"}
+    calls = []
+    module = types.ModuleType("agent.secret_scope")
+    module.get_secret = lambda name: calls.append(name) or values.get(name)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", module)
+    monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-wrong-profile")
+    assert dispatcher._get_api_key() == "test-google"
+    assert dispatcher._load_env(tmp_path) == {"TELEGRAM_BOT_TOKEN": "test-token"}
+    assert jury._load_keys() == ["test-one", "test-two"]
+    assert jury._next_key() in {"test-one", "test-two"}
+    values["OLLAMA_API_KEYS"] = "test-other-profile"
+    assert jury._next_key() == "test-other-profile"
+    assert set(calls) == {"GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_HOME_CHANNEL", "TELEGRAM_ALLOWED_USERS", "OLLAMA_API_KEYS"}
+
+
 def test_scope_error_fails_closed(monkeypatch):
     from relic.secrets import secret_value
 

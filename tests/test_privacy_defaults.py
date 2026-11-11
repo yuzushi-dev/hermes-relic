@@ -50,11 +50,12 @@ def test_clean_environment_selects_only_loopback_classifiers(monkeypatch):
 
 
 @pytest.mark.parametrize("enabled", [None, "0", "false", "1"])
-def test_ambient_google_key_is_not_media_opt_in(monkeypatch, enabled):
+def test_ambient_google_key_is_not_media_opt_in(monkeypatch, enabled, scoped_secrets):
     from relic.gumi_plugin.checkin_media_dispatcher import _get_api_key
 
-    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    scoped_secrets["GEMINI_API_KEY"] = "test-google-key"
+    monkeypatch.setenv("GEMINI_API_KEY", "test-wrong-profile")
     monkeypatch.delenv("RELIC_ENABLE_GOOGLE_MEDIA", raising=False)
     if enabled is not None:
         monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", enabled)
-    assert _get_api_key() == ("synthetic-key" if enabled == "1" else None)
+    assert _get_api_key() == ("test-google-key" if enabled == "1" else None)

@@ -1,7 +1,13 @@
 <!-- Visual assets follow RIS - Relic Interface System (cyber77 theme). -->
 <div align="center">
-  <img src="assets/readme/hero.svg" width="830" alt="RELIC Gumi: a local, longitudinal AI companion.">
+  <img src="assets/readme/header.png" width="830" alt="RELIC GUMI: a local, longitudinal AI companion for Hermes Agent.">
 </div>
+
+<p align="center">
+  <a href="assets/readme/showcase.mp4">
+    <img src="assets/readme/showcase.gif" width="720" alt="RELIC GUMI showcase: the 60-facet dashboard. Click to watch the full 60-second video.">
+  </a>
+</p>
 
 <div align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0--or--later-ff003c?style=flat-square&labelColor=120a0d" alt="License: AGPL-3.0-or-later"></a> <img src="https://img.shields.io/badge/PYTHON-3.10%2B-00e5ff?style=flat-square&labelColor=120a0d" alt="Python 3.10 or newer"> <img src="https://img.shields.io/badge/RUNS-FULLY_LOCAL-00e57e?style=flat-square&labelColor=120a0d" alt="Runs fully local"> <img src="https://img.shields.io/badge/HERMES-0.23%2B-ffe23a?style=flat-square&labelColor=120a0d" alt="Hermes 0.23 or newer">

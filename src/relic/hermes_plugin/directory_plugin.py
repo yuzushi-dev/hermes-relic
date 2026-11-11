@@ -323,23 +323,17 @@ def _is_admitted_user_turn(kwargs: dict[str, Any], admitted: _AdmittedTurns) -> 
 def _cron_job_id(session_id: str) -> str | None:
     """Job id of the running cron execution, or None.
 
-    Hermes exposes the run's identity via ``gateway.session_cron.current_execution()``
-    (its session id is ``local-<hash>``, not ``cron_<job>_<date>_<time>``). Only
-    trusted when it belongs to this very session; the session-id pattern is the
-    fallback for older Hermes.
+    Hermes exposes the current fire through ``cron.execution_identity``. Its
+    context-local ``CronExecution`` has a ``job_id`` but no session id. The
+    scheduler binds/resets it per execution, including across worker threads;
+    the session-id pattern is the fallback when that API is unavailable.
     """
     try:
-        from gateway.session_cron import current_execution
+        from cron.execution_identity import current_cron_execution
 
-        execution = current_execution()
-        if (
-            isinstance(execution, (tuple, list))
-            and len(execution) >= 3
-            and execution[1] == session_id
-            and isinstance(execution[2], str)
-            and execution[2]
-        ):
-            return execution[2]
+        execution = current_cron_execution()
+        if execution is not None and isinstance(execution.job_id, str) and execution.job_id:
+            return execution.job_id
     except Exception:
         pass
     match = re.fullmatch(r"cron_(.+)_([0-9]{8})_([0-9]{6})", session_id)

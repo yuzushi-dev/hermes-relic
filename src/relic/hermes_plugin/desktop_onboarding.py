@@ -83,9 +83,8 @@ def routed_setup_command(
 
     return handler
 
-# Fallback B for the time zone when the free-text asker is unavailable: a
-# fixed list of common zones (no personal data). "Other" stays a valid typed
-# answer only through the private asker; without it the user picks from here.
+# Choice-only time-zone fallback: a fixed list of common zones. Arbitrary
+# IANA zones remain available through Telegram, not the public local picker.
 COMMON_ZONES = (
     "Europe/Rome",
     "Europe/London",
@@ -120,20 +119,12 @@ BLOCK_MESSAGE = (
 
 
 def free_text_asker() -> Callable[[str, list], str | None] | None:
-    """The ONLY place that touches Hermes's private free-text asker.
+    """No public Hermes free-text API is available; use choice-only fallback B.
 
-    ``hermes_cli.plugin_choices._ASKER`` is not public API: it may move or
-    disappear at any Hermes upgrade. Callers must treat ``None`` as "unavailable"
-    and degrade to fallback B. A dedicated test pins this seam so the breakage
-    is loud.
+    Do not inspect internal context variables, even when a surface binds one.
+    A supported free-text adapter can be injected into the controller later.
     """
-    try:
-        from hermes_cli import plugin_choices  # protected import, private API
-
-        asker = plugin_choices._ASKER.get()
-    except Exception:  # noqa: BLE001 - import or contextvar may vanish
-        return None
-    return asker if callable(asker) else None
+    return None
 
 
 class DesktopOnboardingController:
@@ -350,13 +341,13 @@ class DesktopOnboardingController:
             self._release(session_key)
 
     def _ask(self, question: Any, engine: Engine) -> str | None:
-        """One native card per question; free text through the private asker."""
+        """One native card per question; choice fallback unless an adapter is injected."""
         text = question_text(question, engine)
         if question.kind == "choice":
             # Dict choices: ask_choice returns the catalog VALUE, not the label.
             choices = [{"value": option.value, "label": option.label} for option in question.options]
             return self.ask_choice(text, choices)
-        # Free-text question: try the private asker, else fallback B.
+        # Free-text question: use an injected adapter if present, else fallback B.
         try:
             asker = self.free_asker()
         except Exception:  # noqa: BLE001 - the seam must degrade, never crash
@@ -487,7 +478,7 @@ def register_desktop_onboarding(
     owns ``/gumi-setup``; the plugin registers it once with the routed handler
     (``routed_setup_command``), chosen by the dispatcher's ``platform`` kwarg.
     ``ctx.ask_choice`` is bound at command time by the surface, so the
-    controller resolves the asker per call (``_ctx_ask_choice``).
+    controller calls the public context method per question.
     """
     global _DESKTOP_CONTROLLER
     controller = DesktopOnboardingController(
@@ -495,17 +486,10 @@ def register_desktop_onboarding(
         profiles_home=profiles_home,
         hermes_base_home=hermes_base_home,
         env=env,
-        ask_choice=_ctx_ask_choice,
+        ask_choice=lambda question, choices: ctx.ask_choice(question, choices),
     )
     _DESKTOP_CONTROLLER = controller
     # The first-turn block is NOT registered as its own hook: the plugin keeps a
     # single ``pre_llm_call`` and calls ``controller.first_turn_block`` from it
     # (directory_plugin._register_hooks), so the hook count stays one per name.
     return controller
-
-
-def _ctx_ask_choice(question: str, choices: list) -> str | None:
-    """``ctx.ask_choice`` resolved at call time (bound per command dispatch)."""
-    from hermes_cli.plugin_choices import ask_choice
-
-    return ask_choice(question, choices)

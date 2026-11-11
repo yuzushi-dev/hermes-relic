@@ -3,8 +3,8 @@
 Onboarding runs in a Telegram chat with your own bot, or in a local Hermes
 chat: the Desktop chat panel, the CLI or the TUI. Closed questions are
 buttons (one per row on Telegram, one native picker per question on the
-Desktop, CLI and TUI); open questions take free
-text. Answers are kept in `$RELIC_HOME/user/onboarding_progress.json`
+Desktop, CLI and TUI); open questions take free text on Telegram and use
+choice-only fallbacks on local surfaces. Answers are kept in `$RELIC_HOME/user/onboarding_progress.json`
 (private, `0600`) so you can stop and resume — on the local surfaces too, where
 `/gumi-setup` resumes from the last answered question. Nothing is written
 to the canonical files until you press **Save** on the final summary.
@@ -15,12 +15,15 @@ step on every surface and keeps your answers.
 On the Desktop, CLI and TUI (Hermes platforms `desktop`, `cli`, `tui`,
 `local`) the flow is the same battery, asked with one native picker
 per question (up to 7 buttons, texts verbatim from the same catalog); the
-name and the time zone accept typed text when the host supports it, and
-degrade to a Skip button (name) and a list of common zones (time zone)
-when it does not. While the setup is not complete, the first message on
+name uses a Skip button and the time zone uses a list of common zones.
+Hermes has no public free-text plugin API, so local onboarding cannot capture
+a display name, an arbitrary IANA zone or custom quiet hours; quiet hours keep
+22:00-08:00. Use Telegram onboarding for those free-text answers. All other
+questions still use the public `ctx.ask_choice` API. While the setup is not complete, the first message on
 these surfaces is answered by a fixed notice inviting you to run `/gumi-setup`;
-no inference happens for it. The questions and where each answer lands
-are identical on every surface (see the table below).
+no inference happens for it. The catalog and storage destinations
+are shared across surfaces; the free-text restrictions above apply locally
+(see the table below).
 
 On Telegram, the first message you send, whatever it says (`/start`, "hi"), only
 wakes the bot; Gumi answers with a fixed notice (fictional character, no human

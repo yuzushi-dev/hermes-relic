@@ -415,22 +415,23 @@ def test_multiplex_gateway_without_override_stays_silent(
 
 
 def _fake_current_execution(monkeypatch: pytest.MonkeyPatch, value) -> None:
-    gateway = SimpleNamespace(__path__=[])
-    module = SimpleNamespace(current_execution=lambda: value)
-    gateway.session_cron = module
-    monkeypatch.setitem(sys.modules, "gateway", gateway)
-    monkeypatch.setitem(sys.modules, "gateway.session_cron", module)
+    # Public execution identity is a record, not the old gateway tuple.
+    execution = None if value is None else SimpleNamespace(
+        job_id=value, job_name="Synthetic job", execution_id="ex1",
+        source="builtin", scheduled_instant=None, started_at=None, profile="default",
+    )
+    module = SimpleNamespace(current_cron_execution=lambda: execution)
+    monkeypatch.setitem(sys.modules, "cron.execution_identity", module)
 
 
-def _no_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "gateway", None)
-    monkeypatch.setitem(sys.modules, "gateway.session_cron", None)
+def _no_cron_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "cron.execution_identity", None)
 
 
 def test_execution_context_identifies_the_job_when_session_id_does_not(
     env: _Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake_current_execution(monkeypatch, ("auth", "local-abc", JOB_ID, "ex1"))
+    _fake_current_execution(monkeypatch, JOB_ID)
     transform, _critic, _deps = _transform(env, sanitized="Hi, it's Gumi.")
 
     out = transform(response_text="Hello", platform="cron", session_id="local-abc")
@@ -439,31 +440,45 @@ def test_execution_context_identifies_the_job_when_session_id_does_not(
     assert env.status() == "sent"
 
 
-def test_execution_context_for_another_session_stays_silent(
-    env: _Env, monkeypatch: pytest.MonkeyPatch
+def test_execution_context_does_not_leak_into_another_context(
+    env: _Env,
 ) -> None:
-    _fake_current_execution(monkeypatch, ("auth", "local-zzz", JOB_ID, "ex1"))
-    transform, _critic, _deps = _transform(env)
+    import contextvars
+    from relic.hermes_plugin import directory_plugin
 
-    assert transform(response_text="Hello", platform="cron", session_id="local-abc") == "[SILENT]"
-    assert env.status() == "requested"
+    identity = pytest.importorskip("cron.execution_identity")
+    token = identity.enter_cron_execution(
+        {"id": JOB_ID, "name": "Synthetic first message"}, "ex1", {"source": "builtin"}
+    )
+    try:
+        # CronExecution deliberately has no session_id: the scheduler's
+        # ContextVar binding/reset replaces the old tuple's session check.
+        assert directory_plugin._cron_job_id("local-abc") == JOB_ID
+        transform, _critic, _deps = _transform(env)
+        assert contextvars.Context().run(
+            transform, response_text="Hello", platform="cron", session_id="local-abc"
+        ) == "[SILENT]"
+        assert env.status() == "requested"
+    finally:
+        identity.exit_cron_execution(token)
+    assert directory_plugin._cron_job_id("local-abc") is None
 
 
 def test_execution_context_of_another_job_stays_silent(
     env: _Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     env.write_jobs([_first_message_job(), {"id": "other02", "name": "something else"}])
-    _fake_current_execution(monkeypatch, ("auth", "local-abc", "other02", "ex1"))
+    _fake_current_execution(monkeypatch, "other02")
     transform, _critic, _deps = _transform(env)
 
     assert transform(response_text="Hello", platform="cron", session_id="local-abc") == "[SILENT]"
     assert env.status() == "requested"
 
 
-def test_without_gateway_module_the_session_id_regex_still_delivers(
+def test_without_cron_identity_module_the_session_id_regex_still_delivers(
     env: _Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _no_gateway(monkeypatch)
+    _no_cron_identity(monkeypatch)
     transform, _critic, _deps = _transform(env, sanitized="Hi, it's Gumi.")
 
     out = transform(response_text="Hello", platform="cron", session_id=SESSION)

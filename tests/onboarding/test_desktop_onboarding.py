@@ -543,7 +543,7 @@ def test_ask_degrades_when_injected_free_asker_raises(tmp_path):
     assert env.controller._ask(question, engine) == SKIP
 
 
-def test_free_text_asker_returns_callable_when_contextvar_bound(monkeypatch):
+def test_free_text_asker_ignores_private_contextvar_even_when_bound(monkeypatch):
     import sys
     import types
 
@@ -555,9 +555,9 @@ def test_free_text_asker_returns_callable_when_contextvar_bound(monkeypatch):
     fake._ASKER = _FakeContextVar(ask)
     monkeypatch.setitem(sys.modules, "hermes_cli.plugin_choices", fake)
     monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
-    result = desk.free_text_asker()
-    assert result is not None and callable(result)
-    assert result("q", []) == "typed answer"
+    # Review point 3: private context bindings are no longer a supported seam.
+    # A bound internal asker must never re-enable free-text on local surfaces.
+    assert desk.free_text_asker() is None
 
 
 class _FakeContextVar:
@@ -569,6 +569,20 @@ class _FakeContextVar:
 
 
 # --- registration: routed command, first-turn block ------------------------
+
+
+def test_registration_calls_public_context_ask_choice(tmp_path):
+    seen = []
+    ctx = SimpleNamespace(ask_choice=lambda question, choices: seen.append((question, choices)) or "chosen")
+    controller = desk.register_desktop_onboarding(
+        ctx, relic_home=tmp_path / "relic", profiles_home=tmp_path / "profiles",
+        hermes_base_home=tmp_path / "hermes", env={},
+    )
+    assert controller.ask_choice("Synthetic question", ["chosen"]) == "chosen"
+    assert seen == [("Synthetic question", ["chosen"])]
+    # Lookup remains per call, but only through the public PluginContext method.
+    ctx.ask_choice = lambda question, choices: None
+    assert controller.ask_choice("Cancelled", ["chosen"]) is None
 
 
 def test_routed_setup_command_routes_on_platform(tmp_path):
@@ -976,7 +990,7 @@ def test_free_text_cancel_stops_the_run_instead_of_opening_a_fallback_card(tmp_p
     assert len(fallback_cards) == 1
 
 
-def test_free_text_asker_contract_with_the_installed_hermes():
+def test_bound_hermes_asker_does_not_enable_private_free_text():
     plugin_choices = pytest.importorskip("hermes_cli.plugin_choices")
     seen = []
 
@@ -986,9 +1000,8 @@ def test_free_text_asker_contract_with_the_installed_hermes():
 
     assert desk.free_text_asker() is None  # nothing bound outside a command
     with plugin_choices.bind_asker(fake):
-        asker = desk.free_text_asker()
-        assert callable(asker) and asker("q?", []) == "typed"
-    assert seen == [("q?", [])]
+        assert desk.free_text_asker() is None
+    assert seen == []
 
 
 def test_concurrent_retries_from_two_sessions_schedule_once(tmp_path):

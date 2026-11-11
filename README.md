@@ -138,8 +138,8 @@ Disclosed up front, so you can decide before enabling it:
 - **Credential files:** the plugin reads secrets from the process environment that Hermes provides. The only `.env` it parses is the dedicated `relic-gumi` profile's own file, which the installer creates, during onboarding (to find the Telegram token and your user ID). It never reads other profiles' `.env`, `auth.json`, or other tools' credential files. Moving that read behind Hermes' secret scope is a known follow-up.
 - **Scheduled jobs:** the installer adds cron jobs to the profile's `cron/jobs.json` (check-ins, proactive messages). They stay silent until you consent during onboarding.
 - **Processes:** detached delivery subprocesses for scheduled messages; optional local media generation (ComfyUI, ACE-Step) when you enable media.
-- **Network:** only the Hermes provider you configure, Telegram, and the optional cloud media services (Gemini, Lyria) if you enable them.
-- **No self-update, no core patching.** Hermes-internal imports are limited to the CLI/installer paths (`install.py`, `manual_cron.py`) and two guarded fallbacks that degrade when absent (`gateway.session_cron`, `hermes_cli.plugin_choices`).
+- **Network:** the Hermes provider you configure, Telegram, local Ollama/ComfyUI/ACE-Step by default, any classifier or media endpoints you explicitly override, and Google media services (Gemini/Lyria) only after the separate opt-in described above.
+- **No self-update, no core patching.** Runtime onboarding uses public `ctx.ask_choice`; without a public free-text API, local setup uses choice-only fallbacks (Skip name, common time zones, default quiet hours). Cron identity uses `cron.execution_identity.current_cron_execution()` and `.job_id`, with a session-name fallback when unavailable. Other Hermes-internal imports remain in operator CLI/installer paths (`install.py`, `manual_cron.py`).
 - **Without a User profile** (fresh install) the plugin registers only onboarding and logs a warning; continuity hooks switch on after `/gumi-setup` and a Hermes restart.
 
 ## Privacy

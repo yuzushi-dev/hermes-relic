@@ -1,0 +1,290 @@
+"""Outcome reconciler: delivered → unanswered_24h transitions (Plan §Task 4b).
+
+Reads canonical decision events to find deliveries whose response window has
+expired without a subject reply, then:
+  - emits a follow-up canonical event with ``outcome_status="unanswered_24h"``
+    and ``outcome_status_before="delivered"``;
+  - reconciles ``checkin_cadence_state`` via ``reconcile_cadence_outcome``.
+
+Source order:
+  - preferred: Chronicle reader (``relic.chronicle.reader.query_events``);
+  - fallback: append-only ``decision_events.jsonl`` mirror under ``RELIC_HOME``.
+
+Replies are matched against Hermes ``state.db`` (any subject-authored message
+inside ``[delivered_at, response_deadline_at]``), not only the
+``checkin_exchanges`` table, non-ask deliveries must not be misclassified.
+
+The reconciler is idempotent: events that already produced an
+``unanswered_24h`` transition for the same ``parent_event_id`` are skipped.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import logging
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Iterable, Iterator, Optional
+
+from relic.checkin.features import (
+    load_cadence_state,
+    reconcile_cadence_outcome,
+    save_cadence_state,
+)
+from relic.checkin.hermes_state_reader import has_user_reply_between
+from relic.paths import get_relic_home
+
+logger = logging.getLogger(__name__)
+
+
+DEFAULT_RESPONSE_WINDOW_HOURS = 24
+_RECONCILIATION_TABLE = "_relic_outcome_reconciliation"
+
+
+def _decision_log_path(relic_home: Path) -> Path:
+    return Path(relic_home) / "decision_events.jsonl"
+
+
+def _iter_decision_log(relic_home: Path) -> Iterable[dict]:
+    path = _decision_log_path(relic_home)
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError as exc:
+        logger.debug("outcome_reconciler: log read failed: %s", exc)
+    return out
+
+
+def _append_event(relic_home: Path, event: dict) -> None:
+    path = _decision_log_path(relic_home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event) + "\n")
+
+
+def _to_dt(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _has_subject_reply(
+    hermes_home: Path,
+    delivered_at: datetime,
+    deadline_at: datetime,
+) -> bool:
+    return has_user_reply_between(hermes_home, delivered_at, deadline_at)
+
+
+def _already_reconciled(
+    events: list[dict],
+    parent_id: Optional[str],
+    parent_created_at: Optional[str],
+) -> bool:
+    if not parent_id and not parent_created_at:
+        return False
+    for ev in events:
+        if ev.get("outcome_status") != "unanswered_24h":
+            continue
+        meta = ev.get("metadata") or {}
+        if parent_id and meta.get("parent_event_id") == parent_id:
+            return True
+        if parent_created_at and meta.get("parent_created_at") == parent_created_at:
+            return True
+    return False
+
+
+def _reconciliation_key(source: dict) -> str:
+    parent_id = source.get("event_id") or source.get("id")
+    if parent_id:
+        return f"event:{parent_id}"
+    stable = json.dumps(source, sort_keys=True, separators=(",", ":"), default=str)
+    return "sha256:" + hashlib.sha256(stable.encode("utf-8")).hexdigest()
+
+
+def _reconcile_cadence_once(
+    connection: sqlite3.Connection,
+    *,
+    reconciliation_key: str,
+    subject_id: str,
+    source: dict,
+    now: datetime,
+) -> None:
+    """Commit the cadence transition and its idempotency receipt together."""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute(
+            f"""CREATE TABLE IF NOT EXISTS {_RECONCILIATION_TABLE} (
+                reconciliation_key TEXT PRIMARY KEY,
+                reconciled_at TEXT NOT NULL
+            )"""
+        )
+        inserted = connection.execute(
+            f"INSERT OR IGNORE INTO {_RECONCILIATION_TABLE} VALUES (?, ?)",
+            (reconciliation_key, now.isoformat()),
+        ).rowcount
+        if inserted:
+            state = load_cadence_state(connection, subject_id)
+            new_state = reconcile_cadence_outcome(
+                state,
+                {
+                    "outcome_status_before": "delivered",
+                    "outcome_status": "unanswered_24h",
+                    "decision_type": source.get("decision_type"),
+                    "now": now,
+                },
+            )
+            save_cadence_state(connection, new_state)
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+
+
+@contextmanager
+def _reconcile_lock(relic_home: Path) -> Iterator[None]:
+    """Serialise reconcilers across processes.
+
+    ``_already_reconciled`` reads the log into memory, so two reconcilers that
+    read before either appends both see "not yet reconciled" and each emits a
+    transition for the same delivery, double-incrementing the streak. The cron
+    gate and message jobs share a schedule and both call the reconciler, so the
+    two do overlap in practice.
+    """
+    lock_path = Path(relic_home) / ".outcome_reconciler.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def reconcile_due_outcomes(
+    subject_id: str,
+    *,
+    relic_home: Path,
+    hermes_home: Optional[Path] = None,
+    now: Optional[datetime] = None,
+    default_window_hours: int = DEFAULT_RESPONSE_WINDOW_HOURS,
+    db_path: Path | None = None,
+) -> int:
+    """Materialise overdue delivered events into ``unanswered_24h`` transitions.
+
+    Returns the count of new transitions emitted.
+    """
+    with _reconcile_lock(relic_home):
+        return _reconcile_due_outcomes_locked(
+            subject_id,
+            relic_home=relic_home,
+            hermes_home=hermes_home,
+            now=now,
+            default_window_hours=default_window_hours,
+            db_path=db_path,
+        )
+
+
+def _reconcile_due_outcomes_locked(
+    subject_id: str,
+    *,
+    relic_home: Path,
+    hermes_home: Optional[Path] = None,
+    now: Optional[datetime] = None,
+    default_window_hours: int = DEFAULT_RESPONSE_WINDOW_HOURS,
+    db_path: Path | None = None,
+) -> int:
+    now = now or datetime.now(timezone.utc)
+    relic_home = Path(relic_home)
+    if hermes_home is None:
+        hermes_home = relic_home / "hermes"
+
+    events = list(_iter_decision_log(relic_home))
+    if not events:
+        return 0
+
+    db_path = Path(db_path) if db_path is not None else relic_home / "subjects" / subject_id / "relic.db"
+    cadence_conn: Optional[sqlite3.Connection] = None
+    if db_path.exists():
+        cadence_conn = sqlite3.connect(str(db_path), timeout=5.0)
+
+    emitted = 0
+    try:
+        for source in events:
+            if source.get("subject_id") != subject_id:
+                continue
+            if source.get("outcome_status") != "delivered":
+                continue
+
+            delivered_at = (
+                _to_dt(source.get("delivered_at"))
+                or _to_dt(source.get("created_at"))
+            )
+            if delivered_at is None:
+                continue
+
+            deadline_at = (
+                _to_dt(source.get("response_deadline_at"))
+                or delivered_at + timedelta(hours=default_window_hours)
+            )
+            if deadline_at > now:
+                continue
+
+            parent_id = source.get("event_id") or source.get("id")
+            parent_created_at = source.get("created_at")
+            if _already_reconciled(events, parent_id, parent_created_at):
+                continue
+
+            if _has_subject_reply(hermes_home, delivered_at, deadline_at):
+                continue
+
+            transition = {
+                "decision": "NO_REPLY",
+                "subject_id": subject_id,
+                "gumi_instance_id": source.get("gumi_instance_id", ""),
+                "hermes_profile_id": source.get("hermes_profile_id", ""),
+                "decision_type": source.get("decision_type"),
+                "event_kind": source.get("event_kind"),
+                "outcome_status_before": "delivered",
+                "outcome_status": "unanswered_24h",
+                "response_deadline_at": deadline_at.isoformat(),
+                "created_at": now.isoformat(),
+                "metadata": {
+                    "source": "outcome_reconciler",
+                    "parent_event_id": parent_id,
+                    "parent_created_at": parent_created_at,
+                },
+            }
+            if cadence_conn is not None:
+                _reconcile_cadence_once(
+                    cadence_conn,
+                    reconciliation_key=_reconciliation_key(source),
+                    subject_id=subject_id,
+                    source=source,
+                    now=now,
+                )
+            _append_event(relic_home, transition)
+            events.append(transition)
+            emitted += 1
+    finally:
+        if cadence_conn is not None:
+            cadence_conn.close()
+
+    return emitted

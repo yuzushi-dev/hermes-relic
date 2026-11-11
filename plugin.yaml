@@ -1,0 +1,20 @@
+name: relic-gumi
+kind: standalone
+version: 0.1.0
+requires_hermes: ">=0.23.0"
+description: Full Relic continuity, relational context, check-in, lifecycle, output safety, and turn synchronization for foreground User conversations.
+provides_tools:
+  - gumi_read_canon
+  - gumi_write_report
+  - relic_continuity_candidate
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call
+  - transform_llm_output
+  - pre_gateway_dispatch
+python_dependencies:
+  - "jsonschema>=4.0,<5"
+  - "pydantic>=2.0,<3"
+  - "PyYAML>=6.0,<7"
+  - "structlog>=24.0,<27"
+  - "requests>=2.28,<3"

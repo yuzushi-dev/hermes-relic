@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 830 190" width="830" height="190" role="img" aria-labelledby="ttl dsc">
+<title id="ttl">RELIC GUMI — installer, user artifacts, Hermes hooks, cron runtime</title>
+<desc id="dsc">System map. Stage 01 INSTALLER, the relic-gumi package, discovers, verifies and copies the profile plugin, then reconciles gateway and cron. Stage 02 USER ARTIFACTS holds setup, preferences and private continuity records under ~/.relic/user. Stage 03 HERMES HOOKS runs pre_llm_call, post_llm_call and transform_llm_output on foreground user_visible turns. Below, CRON RUNTIME is the managed schedule: memory sync and check-in gates every 30 minutes, diegetic dispatch hourly and only while delivery is armed, compaction and review overnight.</desc>
+
+<defs>
+<radialGradient id="bloom" cx="0.5" cy="-0.12" r="1.1">
+<stop offset="0" stop-color="#ff003c" stop-opacity="0.20"/>
+<stop offset="0.6" stop-color="#ff003c" stop-opacity="0"/>
+</radialGradient>
+<radialGradient id="reverb" cx="0.5" cy="1.18" r="0.95">
+<stop offset="0" stop-color="#ff003c" stop-opacity="0.07"/>
+<stop offset="0.55" stop-color="#ff003c" stop-opacity="0"/>
+</radialGradient>
+<pattern id="scan" width="4" height="3" patternUnits="userSpaceOnUse">
+<rect y="2" width="4" height="1" fill="#ff003c" opacity="0.05"/>
+</pattern>
+<filter id="grain" x="0" y="0" width="100%" height="100%">
+<feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>
+<feColorMatrix type="saturate" values="0"/>
+<feComponentTransfer><feFuncA type="linear" slope="0.05"/></feComponentTransfer>
+<feComposite operator="in" in2="SourceGraphic"/>
+</filter>
+<filter id="glow" x="-400%" y="-400%" width="900%" height="900%">
+<feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#ff003c" flood-opacity="0.45"/>
+</filter>
+<filter id="glowY" x="-400%" y="-400%" width="900%" height="900%">
+<feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#ffe23a" flood-opacity="0.45"/>
+</filter>
+</defs>
+<clipPath id="frame"><polygon points="0.0,0.0 814.0,0.0 830.0,16.0 830.0,190.0 10.0,190.0 0.0,180.0"/></clipPath>
+<polygon points="0.5,0.5 813.5,0.5 829.5,16.5 829.5,189.5 10.5,189.5 0.5,179.5" fill="#0a0608" stroke="#6e2d38" stroke-width="1"/>
+<g clip-path="url(#frame)">
+<rect width="830" height="190" fill="url(#bloom)"/>
+<rect width="830" height="190" fill="url(#reverb)"/>
+<rect width="830" height="190" fill="url(#scan)"/>
+<rect width="830" height="190" fill="#808080" filter="url(#grain)"/>
+<rect x="1" y="1" width="812" height="1.5" fill="#ff003c" filter="url(#glow)"/>
+</g>
+<path d="M813.5,0.5 L829.5,16.5" stroke="#ff003c" stroke-width="1.5" fill="none" filter="url(#glow)"/>
+<path d="M0.5,179.5 L10.5,189.5" stroke="#ff003c" stroke-width="1.5" fill="none" filter="url(#glow)" opacity="0.75"/>
+<path d="M3,12 V3 H12" stroke="#ff003c" stroke-width="1.5" fill="none" filter="url(#glow)"/>
+<path d="M827,178 V187 H818" stroke="#ff003c" stroke-width="1.5" fill="none" filter="url(#glow)" opacity="0.75"/>
+<rect x="10" y="40" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="53" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="66" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="79" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="92" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="105" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="118" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="131" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="144" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="10" y="157" width="6" height="1" fill="#8f1f30" opacity="0.45"/>
+<rect x="814" y="40" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="814" y="66" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="814" y="92" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="814" y="118" width="6" height="1" fill="#8f1f30" opacity="0.45"/><rect x="814" y="144" width="6" height="1" fill="#8f1f30" opacity="0.45"/>
+<text x="28" y="22" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ff4d62" letter-spacing="1.2" font-weight="500" opacity="0.85">SYSTEM MAP // THREE STAGES</text>
+<text x="802" y="22" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ff4d62" letter-spacing="1.2" text-anchor="end" font-weight="500" opacity="0.85">HOST API v2 // PROFILE GUMI</text>
+<rect x="1" y="31" width="828" height="1" fill="#6e2d38"/>
+<polygon points="28.5,40.5 253.5,40.5 263.5,50.5 263.5,119.5 34.5,119.5 28.5,113.5" fill="#120a0d" stroke="#6e2d38" stroke-width="1"/>
+<rect x="29" y="41" width="3" height="78" fill="#ffe23a" opacity="0.85"/>
+<text x="42" y="62" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ffd83a" letter-spacing="0.8" font-weight="700">01</text>
+<text x="66" y="62" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="12" fill="#f3eef0" letter-spacing="1.2" font-weight="700">INSTALLER</text>
+<text x="41" y="80" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ffd83a" letter-spacing="0.3" font-weight="500" opacity="0.9">PYPI · relic-gumi</text>
+<rect x="41" y="86" width="210" height="1" fill="#6e2d38" opacity="0.8"/>
+<text x="41" y="100" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.8">DISCOVER · VERIFY · COPY</text>
+<text x="41" y="114" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.8">RECONCILE GATEWAY + CRON</text>
+<polygon points="297.5,40.5 522.5,40.5 532.5,50.5 532.5,119.5 303.5,119.5 297.5,113.5" fill="#120a0d" stroke="#6e2d38" stroke-width="1"/>
+<rect x="298" y="41" width="3" height="78" fill="#00e5ff" opacity="0.85"/>
+<text x="311" y="62" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#3df0ff" letter-spacing="0.8" font-weight="700">02</text>
+<text x="335" y="62" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="12" fill="#f3eef0" letter-spacing="1.2" font-weight="700">USER ARTIFACTS</text>
+<text x="310" y="80" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#3df0ff" letter-spacing="0.3" font-weight="500" opacity="0.9">~/.relic/user</text>
+<rect x="310" y="86" width="210" height="1" fill="#6e2d38" opacity="0.8"/>
+<text x="310" y="100" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.8">SETUP · PREFERENCES</text>
+<text x="310" y="114" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.8">CONTINUITY · PRIVATE</text>
+<polygon points="566.5,40.5 791.5,40.5 801.5,50.5 801.5,119.5 572.5,119.5 566.5,113.5" fill="#120a0d" stroke="#6e2d38" stroke-width="1"/>
+<rect x="567" y="41" width="3" height="78" fill="#00e57e" opacity="0.85"/>
+<text x="580" y="62" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#34f08c" letter-spacing="0.8" font-weight="700">03</text>
+<text x="604" y="62" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="12" fill="#f3eef0" letter-spacing="1.2" font-weight="700">HERMES HOOKS</text>
+<text x="579" y="80" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#34f08c" letter-spacing="0.3" font-weight="500" opacity="0.9">foreground · user_visible</text>
+<rect x="579" y="86" width="210" height="1" fill="#6e2d38" opacity="0.8"/>
+<text x="579" y="100" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.8">pre_llm_call · post_llm_call</text>
+<text x="579" y="114" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.8">transform_llm_output</text>
+<path d="M270,80 H286" stroke="#ff003c" stroke-width="1.5" fill="none" filter="url(#glow)"/><path d="M283,75 L288,80 L283,85" stroke="#ff003c" stroke-width="1.5" fill="none" stroke-linejoin="miter" filter="url(#glow)"/>
+<path d="M539,80 H555" stroke="#ff003c" stroke-width="1.5" fill="none" filter="url(#glow)"/><path d="M552,75 L557,80 L552,85" stroke="#ff003c" stroke-width="1.5" fill="none" stroke-linejoin="miter" filter="url(#glow)"/>
+<path d="M146,120 V127" stroke="#9a3a48" stroke-width="1" fill="none"/><polygon points="143,127 149,127 146,132" fill="#9a3a48"/>
+<path d="M415,120 V132" stroke="#6e2d38" stroke-width="1" stroke-dasharray="2 3" fill="none" opacity="0.7"/>
+<polygon points="28.5,132.5 791.5,132.5 801.5,142.5 801.5,171.5 34.5,171.5 28.5,165.5" fill="#120a0d" stroke="#6e2d38" stroke-width="1"/>
+<rect x="29" y="133" width="3" height="38" fill="#ff003c" opacity="0.8"/>
+<text x="42" y="150" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="12" fill="#f3eef0" letter-spacing="1.6" font-weight="700">CRON RUNTIME</text>
+<text x="42" y="165" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ff4d62" letter-spacing="0.6" font-weight="500" opacity="0.85">MANAGED SCHEDULE</text>
+<rect x="172" y="139" width="1" height="26" fill="#6e2d38"/>
+<rect x="186" y="143" width="6" height="6" fill="#00e5ff"/>
+<text x="200" y="150" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.85">MEMORY SYNC</text>
+<text x="200" y="165" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#3df0ff" letter-spacing="0.3" font-weight="600">EVERY 30m</text>
+<rect x="340" y="143" width="6" height="6" fill="#00e5ff"/>
+<text x="354" y="150" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.85">CHECK-IN GATES</text>
+<text x="354" y="165" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#3df0ff" letter-spacing="0.3" font-weight="600">EVERY 30m</text>
+<rect x="494" y="143" width="6" height="6" fill="#ffe23a"/>
+<text x="508" y="150" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.85">DIEGETIC DISPATCH</text>
+<text x="508" y="165" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ffd83a" letter-spacing="0.3" font-weight="600">HOURLY · ARMED</text>
+<rect x="648" y="143" width="6" height="6" fill="#00e57e"/>
+<text x="662" y="150" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#c8b9bd" letter-spacing="0.3" font-weight="500" opacity="0.85">COMPACT + REVIEW</text>
+<text x="662" y="165" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#34f08c" letter-spacing="0.3" font-weight="600">OVERNIGHT</text>
+<text x="28" y="185" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ff4d62" letter-spacing="0.8" font-weight="500" opacity="0.85">CYAN LOCAL // YELLOW DELIVERY // GREEN OVERNIGHT</text>
+<text x="802" y="185" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Consolas,ui-monospace,monospace" font-size="11" fill="#ff4d62" letter-spacing="0.8" text-anchor="end" font-weight="500" opacity="0.85">LOCAL FIRST // NO SHARED STATE</text>
+</svg>

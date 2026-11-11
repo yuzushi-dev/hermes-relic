@@ -1,0 +1,72 @@
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Packages and build output
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+pip-wheel-metadata/
+
+# Coverage
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+
+# Local state
+*.db
+*.sqlite
+*.sqlite3
+data/
+local-data/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.secret
+secrets/
+
+# Internal planning and agent workspaces
+docs/plans/
+.agents/
+.agent-outs/
+.claude/
+.codex/
+.roam/
+CLAUDE.md
+PROJECT.md
+PLAN.md
+TODO.md
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*~
+*.swp
+
+# Test fixtures/assertions that would expose internal prompt wording or
+# gated-item mappings verbatim; kept locally for regression coverage only.
+tests/internal/
+
+# Local logs and scratch output
+*.log
+logs/
+tmp/
+scratch/
+/artifacts/
+graphify-out/
+.sando/

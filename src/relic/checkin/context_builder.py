@@ -1,0 +1,756 @@
+"""Context builder for Gumi proactive check-in delivery.
+
+Extracted from render_no_agent_script() in gumi_plugin/cron_wiring.py.
+All public functions are fail-open: exceptions return "" for that section.
+
+Public API:
+    build_deliver_context(subject_id, hermes_home, relic_home) -> str
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Mirror of relic.checkin.reply_capture.REPLY_WINDOW_HOURS: a topic-hint ask is
+# only answerable while the exchange is still inside the capture window. Asking a
+# second question while one is already pending creates >1 unanswered exchange,
+# and reply_capture (ORDER BY asked_at DESC LIMIT 1) then mis-attributes the
+# subject's single reply to the wrong facet. Enforce one open question at a time.
+_PENDING_ASK_WINDOW_HOURS = 12
+_PROACTIVE_ANCHOR_WINDOW_HOURS = 7 * 24
+
+
+def _has_pending_exchange(conn, now: datetime) -> bool:
+    """True if an un-replied check-in exchange was asked within the ask window."""
+    cutoff = (now - timedelta(hours=_PENDING_ASK_WINDOW_HOURS)).isoformat()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM checkin_exchanges "
+            "WHERE reply_text IS NULL AND facet_id IS NOT NULL AND asked_at >= ? "
+            "LIMIT 1",
+            (cutoff,),
+        ).fetchone()
+    except Exception:
+        return False  # fail-open: never block delivery on a probe query
+    return row is not None
+
+
+def discard_latest_checkin_attempt(
+    db_path: Path, *, not_before: datetime
+) -> bool:
+    """Remove the latest unconfirmed ask and its feature snapshot."""
+    try:
+        import sqlite3
+
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            exchange = conn.execute(
+                "SELECT id FROM checkin_exchanges "
+                "WHERE reply_text IS NULL AND asked_at >= ? "
+                "ORDER BY asked_at DESC LIMIT 1",
+                (not_before.isoformat(),),
+            ).fetchone()
+            if exchange is None:
+                conn.rollback()
+                return False
+            conn.execute("DELETE FROM checkin_exchanges WHERE id = ?", (exchange[0],))
+            feature = conn.execute(
+                "SELECT id FROM checkin_features "
+                "WHERE posture = 'ask' AND created_at >= ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (not_before.isoformat(),),
+            ).fetchone()
+            if feature is not None:
+                conn.execute("DELETE FROM checkin_features WHERE id = ?", (feature[0],))
+            conn.commit()
+            return True
+    except (OSError, sqlite3.Error):
+        return False
+
+
+def _load_consent(
+    subject_id: str,
+    relic_home: Path,
+    *,
+    policy_path: Path | None = None,
+) -> bool:
+    dp_path = Path(policy_path) if policy_path is not None else relic_home / "subjects" / subject_id / "delivery_policy.json"
+    if not dp_path.exists():
+        return False
+    try:
+        dp = json.loads(dp_path.read_text(encoding="utf-8"))
+        return bool(dp.get("consent_for_active_elicitation", False))
+    except Exception as e:
+        print(f"[checkin] delivery_policy load error: {e}", file=sys.stderr)
+        return False
+
+def build_recent_checkins_section(hermes_home: Path) -> str:
+    """Parse MEMORY.md for recent checkin messages; return formatted block or ''."""
+    try:
+        mem_path = hermes_home / "MEMORY.md"
+        if not mem_path.exists():
+            return ""
+        mem_text = mem_path.read_text(encoding="utf-8")
+
+        checkin_job_id = None
+        jobs_path = hermes_home / "cron" / "jobs.json"
+        if jobs_path.exists():
+            try:
+                jobs_data = json.loads(jobs_path.read_text(encoding="utf-8"))
+                for job in jobs_data.get("jobs", []):
+                    jscript = (job.get("script") or "")
+                    jname = (job.get("name") or "")
+                    if "checkin" in jscript.lower() or "checkin_message" in jname.lower():
+                        checkin_job_id = job.get("id")
+                        break
+            except Exception:
+                pass
+
+        block_re = re.compile(
+            r"<!-- gumi:memory_sync:begin -->(.*?)<!-- gumi:memory_sync:end -->",
+            re.DOTALL,
+        )
+        block_m = block_re.search(mem_text)
+        recent_checkins: list[tuple[str, str]] = []
+        if block_m:
+            block = block_m.group(1)
+            header_re = re.compile(
+                r"### (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \(job=(.+?)\)"
+            )
+            parts = header_re.split(block)
+            pi = 1
+            while pi + 2 <= len(parts):
+                ts_str, jid, body = parts[pi], parts[pi + 1], parts[pi + 2]
+                pi += 3
+                if checkin_job_id and not jid.startswith(checkin_job_id):
+                    continue
+                lines = [
+                    line.strip()[2:]
+                    for line in body.splitlines()
+                    if line.strip().startswith("> ")
+                ]
+                text = " ".join(
+                    line for line in lines if line and line != "[SILENT]"
+                ).strip()
+                if text:
+                    recent_checkins.append((ts_str, text))
+
+        if not recent_checkins:
+            return ""
+
+        out = ["", "--- messaggi recenti inviati (non ripetere immagini o temi già usati) ---"]
+        for ts_str, msg in recent_checkins[-5:]:
+            out.append(f"• [{ts_str}] {msg[:120]}")
+        return "\n".join(out)
+    except Exception:
+        return ""
+
+
+def build_observations_section(
+    db_path: Path, *, now: datetime | None = None
+) -> str:
+    """Query recent observations from relic.db; return formatted block or ''."""
+    try:
+        if not db_path.exists():
+            return ""
+        import sqlite3
+        cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=30)).isoformat()
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro", uri=True, timeout=5.0
+        )
+        try:
+            rows = conn.execute(
+                """SELECT o.content
+                   FROM observations o
+                   WHERE o.source_type = 'checkin_reply'
+                     AND o.created_at >= ?
+                   ORDER BY o.created_at DESC
+                   LIMIT 3""",
+                (cutoff,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            return ""
+
+        out = ["", "--- cosa ho imparato di recente ---"]
+        for (obs_c,) in rows:
+            if obs_c:
+                out.append(f"• {obs_c[:120]}")
+        return "\n".join(out) if len(out) > 2 else ""
+    except Exception as e:
+        print(f"[checkin] observations: {e}", file=sys.stderr)
+        return ""
+
+
+def select_topic_hint(
+    subject_id: str,
+    db_path: Path,
+    bl_path: Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, str] | None:
+    """Select the canonical, anti-repeat-safe topic used by gate and context."""
+    if not db_path.exists():
+        return None
+    import hashlib
+    import sqlite3
+    from relic.checkin.anti_repeat import AntiRepeatGate
+    from relic.checkin.question_engine import select_facet, select_followup
+    from relic.checkin.topic_pause import active_topics, mentions_topic
+    from relic.checkin.topic_hint import render_topic_hint
+
+    current = now or datetime.now(timezone.utc)
+    day_seed = int(
+        hashlib.sha256(f"{subject_id}|ask|{current.date()}".encode()).hexdigest(),
+        16,
+    ) % (2**32)
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0) as conn:
+        try:
+            recent_q = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT question_text FROM checkin_exchanges "
+                    "ORDER BY asked_at DESC LIMIT 10"
+                ).fetchall()
+                if row[0]
+            ]
+        except Exception:
+            recent_q = []
+        followup = select_followup(conn, current)
+        if followup is not None and mentions_topic(
+            followup["hint"], active_topics(db_path.parent, now=current)
+        ):
+            followup = None
+        if followup is not None:
+            block = render_topic_hint(followup["hint"], recent_q)
+            if block:
+                return {
+                    "facet_id": str(followup["facet_id"]),
+                    "hint": str(followup["hint"]),
+                    "block": block,
+                }
+        for attempt in range(8):
+            sel = select_facet(
+                conn,
+                bl_path if bl_path.exists() else None,
+                top_k=3 if attempt == 0 else 20,
+                seed=day_seed + attempt,
+            )
+            if sel.get("status") != "ask_now":
+                continue
+            hint = str(sel.get("question_hint") or "")
+            if not hint or AntiRepeatGate(conn, jaccard_threshold=0.60).check(hint)["duplicate"]:
+                continue
+            block = render_topic_hint(hint, recent_q)
+            if block:
+                return {
+                    "facet_id": str(sel["selected_facet"]),
+                    "hint": hint,
+                    "block": block,
+                }
+    return None
+
+
+def build_topic_hint_section(
+    subject_id: str,
+    db_path: Path,
+    bl_path: Path,
+    *,
+    persist_exchange: bool = True,
+    now: datetime | None = None,
+    force: bool = False,
+) -> str:
+    """Select topic facet, render hint, optionally persist exchange; return block or ''."""
+    try:
+        current = now or datetime.now(timezone.utc)
+        import sqlite3
+
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0) as conn:
+            if persist_exchange and not force and _has_pending_exchange(conn, current):
+                return ""
+        selection = select_topic_hint(subject_id, db_path, bl_path, now=current)
+        if selection is None:
+            return ""
+        if persist_exchange:
+            try:
+                with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+                    conn.execute(
+                        "INSERT INTO checkin_exchanges "
+                        "(facet_id, question_text, asked_at) VALUES (?, ?, ?)",
+                        (selection["facet_id"], selection["hint"], current.isoformat()),
+                    )
+                    conn.commit()
+            except Exception as exc:
+                if "no such table" not in str(exc):
+                    print(f"[checkin] persist: {exc}", file=sys.stderr)
+        return f"\n{selection['block']}"
+    except Exception as e:
+        print(f"[checkin] topic hint: {e}", file=sys.stderr)
+        return ""
+
+
+def build_style_hints_section(bl_path: Path) -> str:
+    """Load subject_baseline.json and render style hints; return block or ''."""
+    try:
+        if not bl_path.exists():
+            return ""
+        from relic.checkin.style_hints import render_style_hints
+
+        bl = json.loads(bl_path.read_text(encoding="utf-8"))
+        style_block = render_style_hints(bl.get("interaction") or {})
+        return f"\n{style_block}" if style_block else ""
+    except Exception as e:
+        print(f"[checkin] style hints: {e}", file=sys.stderr)
+        return ""
+
+
+def build_recent_subject_messages_section(
+    hermes_home: Path,
+    hours: int = 24,
+    limit: int = 5,
+    subject_id: str | None = None,
+    *,
+    now: datetime | None = None,
+    paused_topics: list[str] | None = None,
+) -> str:
+    """Read role='user' messages from Hermes state.db; return formatted block or ''.
+
+    Filters out cron task prompts (content starting with '[IMPORTANT:'),
+    which are system-injected, not subject-authored, and messages about a
+    paused topic (see relic.checkin.topic_pause).
+    Fail-open: any exception -> ''. Logs WARNING with subject_id, db_path,
+    exception type/message so silent failures are observable.
+    """
+    db_path = hermes_home / "state.db"
+    try:
+        if not db_path.exists():
+            logger.warning(
+                "[checkin] subject_messages: state.db missing subject_id=%s db_path=%s",
+                subject_id, db_path,
+            )
+            return ""
+        import sqlite3
+        cutoff_ts = ((now or datetime.now(timezone.utc)) - timedelta(hours=hours)).timestamp()
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro", uri=True, timeout=5.0
+        )
+        try:
+            rows = conn.execute(
+                """SELECT timestamp, content
+                   FROM messages
+                   WHERE role='user'
+                     AND timestamp >= ?
+                     AND content IS NOT NULL
+                     AND content NOT LIKE '[IMPORTANT:%'
+                   ORDER BY timestamp DESC
+                   LIMIT ?""",
+                (cutoff_ts, limit * 4 if paused_topics else limit),
+            ).fetchall()
+        finally:
+            conn.close()
+        if paused_topics:
+            from relic.checkin.topic_pause import mentions_topic
+
+            rows = [r for r in rows if not mentions_topic(r[1], paused_topics)][:limit]
+
+        if not rows:
+            logger.warning(
+                "[checkin] subject_messages: 0 rows subject_id=%s db_path=%s hours=%s",
+                subject_id, db_path, hours,
+            )
+            return ""
+
+        out = [
+            "",
+            "--- cosa ti ha detto di recente (ascoltalo, non parlare solo di te) ---",
+        ]
+        for ts, content in reversed(rows):
+            try:
+                dt_local = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone()
+                ts_str = dt_local.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                ts_str = "?"
+            text = content.strip()
+            if text.startswith("[Replying to:"):
+                # Keep the reply context but trim its quote bracket. The
+                # quoted message is Gumi's own prior turn (often a
+                # self-share, easily 250+ chars) — a cap too tight to hold
+                # it left the raw quote in `text`, and the [:280] slice below
+                # then never reached the subject's actual reply (a past
+                # incident: Gumi asked about its own diegetic
+                # story instead of the subject's answer).
+                end_idx = text.find("]")
+                if 0 < end_idx < 2000:
+                    text = text[end_idx + 1 :].strip()
+            out.append(f"• [{ts_str}] {text[:280]}")
+        return "\n".join(out)
+    except Exception as e:
+        logger.warning(
+            "[checkin] subject_messages: %s: %s subject_id=%s db_path=%s",
+            type(e).__name__, e, subject_id, db_path,
+        )
+        print(f"[checkin] subject messages: {e}", file=sys.stderr)
+        return ""
+
+
+def build_avatar_section(hermes_home: Path) -> str:
+    """Read AVATAR_SPEC.md and return formatted block or ''."""
+    try:
+        avatar_path = hermes_home / "AVATAR_SPEC.md"
+        if not avatar_path.exists():
+            return ""
+        avatar = avatar_path.read_text(encoding="utf-8").strip()
+        if not avatar:
+            return ""
+        return f"\n--- aspetto di Gumi ---\n{avatar[:600]}"
+    except Exception:
+        return ""
+
+
+_POSTURE_SECTIONS: dict[tuple[str, str], dict[str, bool]] = {
+    # Spike §10.2: posture-to-section selection. Keys default to True so legacy
+    # callers (no event_type/posture passed) keep the full bundle.
+    ("checkin", "observe"): {
+        "recent_checkins": True,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+    },
+    ("checkin", "brief_share"): {
+        "recent_checkins": False,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+    },
+    ("checkin", "ask"): {
+        "recent_checkins": True,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": True,
+        "style_hints": True,
+        "avatar": True,
+    },
+    ("checkin", "small_share"): {
+        "recent_checkins": False,
+        "recent_subject_messages": False,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": False,
+        "avatar": True,
+    },
+    ("followup", "follow_up_warm"): {
+        "recent_checkins": True,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+        "last_exchange": True,
+    },
+    ("followup", "follow_up_terse"): {
+        "recent_checkins": False,
+        "recent_subject_messages": False,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": False,
+        "avatar": False,
+        "last_exchange": True,
+    },
+    ("followup", "reflective_mirror"): {
+        "recent_checkins": True,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+        "last_exchange": True,
+    },
+    ("proactive", "brief_share"): {
+        "recent_checkins": False,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+    },
+    ("proactive", "small_share"): {
+        "recent_checkins": False,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+        "last_exchange": False,
+    },
+    ("diegetic", "small_share"): {
+        "recent_checkins": False,
+        "recent_subject_messages": False,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": False,
+        "avatar": True,
+        "last_exchange": False,
+    },
+    ("diegetic", "brief_share"): {
+        "recent_checkins": False,
+        "recent_subject_messages": True,
+        "observations": False,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+    },
+    ("reflection", "reflective_mirror"): {
+        "recent_checkins": True,
+        "recent_subject_messages": True,
+        "observations": True,
+        "topic_hint": False,
+        "style_hints": True,
+        "avatar": True,
+    },
+}
+
+
+def _default_section_flags() -> dict[str, bool]:
+    return {
+        "recent_checkins": True,
+        "recent_subject_messages": True,
+        "observations": True,
+        "topic_hint": True,
+        "style_hints": True,
+        "avatar": True,
+        "last_exchange": False,
+    }
+
+
+def _resolve_section_flags(event_type: str | None, posture: str | None) -> dict[str, bool]:
+    if event_type is None and posture is None:
+        return _default_section_flags()
+    key = (str(event_type), str(posture))
+    profile = _POSTURE_SECTIONS.get(key)
+    if profile is None:
+        if event_type in {"proactive", "diegetic"}:
+            return {
+                "recent_checkins": False,
+                "recent_subject_messages": False,
+                "observations": False,
+                "topic_hint": False,
+                "style_hints": False,
+                "avatar": True,
+                "last_exchange": False,
+            }
+        return _default_section_flags()
+    flags = _default_section_flags()
+    flags.update(profile)
+    return flags
+
+
+def build_deliver_context(
+    subject_id: str,
+    hermes_home: Path | None,
+    relic_home: Path | None = None,
+    *,
+    event_type: str | None = None,
+    posture: str | None = None,
+    persist_topic_hint: bool = True,
+    media_type: str | None = None,
+    db_path: Path | None = None,
+    baseline_path: Path | None = None,
+    policy_path: Path | None = None,
+    now: datetime | None = None,
+    force: bool = False,
+) -> str:
+    """Build context string for check-in DELIVER output.
+
+    Sections are selected from spike §10.2 when ``event_type`` and ``posture``
+    are passed; legacy callers (no posture) keep the full bundle. ``silent``
+    short-circuits to an empty string so the composer is never invoked.
+
+    ``db_path``, ``baseline_path`` and ``policy_path`` let a canonical
+    singleton User keep the check-in store private without reintroducing a
+    subject directory.
+    """
+    if event_type == "silent" or posture == "quiet":
+        return ""
+
+    if not hermes_home:
+        return ""
+
+    if relic_home is None:
+        import os
+
+        relic_home = Path(
+            os.environ.get("RELIC_HOME", "") or str(Path.home() / ".relic")
+        )
+
+    db_path = Path(db_path) if db_path is not None else relic_home / "subjects" / subject_id / "relic.db"
+    bl_path = (
+        Path(baseline_path)
+        if baseline_path is not None
+        else relic_home / "subjects" / subject_id / "subject_baseline.json"
+    )
+
+    consent = _load_consent(subject_id, relic_home, policy_path=policy_path)
+    flags = _resolve_section_flags(event_type, posture)
+    paused_topics: list[str] = []
+    if event_type != "diegetic":
+        from relic.checkin.topic_pause import active_topics
+
+        paused_topics = active_topics(db_path.parent, now=now)
+
+    parts: list[str] = []
+
+    # Track the "concrete-anchor" sections separately so we can detect a
+    # context that is empty of conversational hooks (Fix #1).
+    anchor_sections: dict[str, str] = {
+        "recent_subject_messages": "",
+        "last_exchange": "",
+        "topic_hint": "",
+        "recent_observations": "",
+    }
+
+    if flags.get("recent_checkins"):
+        parts.append(build_recent_checkins_section(hermes_home))
+    if flags.get("recent_subject_messages"):
+        subject_message_hours = (
+            _PROACTIVE_ANCHOR_WINDOW_HOURS if event_type == "proactive" else 24
+        )
+        sec = build_recent_subject_messages_section(
+            hermes_home,
+            hours=subject_message_hours,
+            subject_id=subject_id,
+            now=now,
+            paused_topics=paused_topics,
+        )
+        anchor_sections["recent_subject_messages"] = sec
+        parts.append(sec)
+
+    if consent:
+        if flags.get("observations"):
+            sec = build_observations_section(db_path, now=now)
+            anchor_sections["recent_observations"] = sec
+            parts.append(sec)
+        if flags.get("topic_hint"):
+            sec = build_topic_hint_section(
+                subject_id,
+                db_path,
+                bl_path,
+                persist_exchange=persist_topic_hint,
+                now=now,
+                **({"force": True} if force else {}),
+            )
+            anchor_sections["topic_hint"] = sec
+            parts.append(sec)
+        if flags.get("style_hints"):
+            parts.append(build_style_hints_section(bl_path))
+        if flags.get("last_exchange"):
+            # last_exchange echoes raw reply text; same consent gate as
+            # observations / topic_hint / style_hints.
+            sec = build_last_exchange_section(db_path)
+            anchor_sections["last_exchange"] = sec
+            parts.append(sec)
+
+    if flags.get("avatar"):
+        parts.append(build_avatar_section(hermes_home))
+    if paused_topics:
+        from relic.checkin.topic_pause import render_paused_section
+
+        parts.append(render_paused_section(paused_topics))
+
+    # Fix #1: if ALL conversational anchors are empty, append a mode
+    # instruction guiding the LLM toward either a tiny factual share or
+    # [SILENT]. We never force [SILENT] here: only nudge.
+    if all(not v for v in anchor_sections.values()):
+        logger.warning(
+            "[checkin] empty-anchor context subject_id=%s event=%s posture=%s",
+            subject_id, event_type, posture,
+        )
+        if media_type in ("voice", "image", "music"):
+            # A media gate (tipo: voice/image/music) must not be collapsed to a
+            # 12-word text share: the composer's own contract handles the
+            # no-anchor media case (ambient gesture, no faked thread). Only
+            # state that no anchor exists and hand the modality back to it.
+            parts.append(
+                "\n--- ISTRUZIONE MODALITÀ ---\n"
+                "Nessun aggancio concreto disponibile (nessun messaggio recente del soggetto, "
+                "nessuna observation, nessun topic hint).\n"
+                f"Il gate chiede comunque un contenuto di tipo '{media_type}': componilo come "
+                "gesto ambientale coerente col momento della giornata e col tuo mondo, nel "
+                "formato richiesto dal tuo contratto per quel tipo, SENZA fingere un filo di "
+                "conversazione che non c'è e senza domande."
+            )
+        else:
+            parts.append(
+                "\n--- ISTRUZIONE MODALITÀ ---\n"
+                "Nessun aggancio concreto disponibile (nessun messaggio recente del soggetto, "
+                "nessuna observation, nessun topic hint).\n"
+                "Hai due opzioni:\n"
+                "(a) Scrivi UNA frase fattuale brevissima su cosa stai facendo TU adesso "
+                "usando un gesto osservabile o un dettaglio sensoriale coerente con l'ora. "
+                "Non copiare formule o esempi preesistenti. Niente domande, niente auguri, "
+                "niente appunti, sistemi o riflessioni astratte. Max 12 parole.\n"
+                "(b) Rispondi esattamente [SILENT] se non hai nulla di concreto da dire.\n"
+                "Preferisci [SILENT] se sei incerta, il silenzio vale più di un messaggio generico."
+            )
+
+    return "".join(part for part in parts if part)
+
+
+def build_last_exchange_section(db_path: Path) -> str:
+    """Return a bounded summary of the most recent answered checkin exchange.
+
+    Hard limits: no full transcript; ``reply_excerpt`` capped at 240 chars;
+    no observations/facets unless required by the posture's section profile.
+    """
+    if not db_path.exists():
+        return ""
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path), timeout=5.0)
+        try:
+            row = conn.execute(
+                """SELECT id, facet_id, question_text, reply_text, asked_at,
+                          reply_captured_at, response_latency_seconds, posture
+                   FROM checkin_exchanges
+                   WHERE reply_text IS NOT NULL
+                   ORDER BY reply_captured_at DESC
+                   LIMIT 1""",
+            ).fetchone()
+        except Exception:
+            return ""
+        finally:
+            conn.close()
+    except Exception:
+        return ""
+
+    if not row:
+        return ""
+
+    question_text = (row[2] or "")[:240]
+    reply_excerpt = (row[3] or "")[:240]
+    lines = [
+        "\n--- ultimo scambio (riepilogo) ---",
+        f"• domanda: {question_text}",
+        f"• risposta: {reply_excerpt}",
+    ]
+    if row[4]:
+        lines.append(f"• chiesto: {row[4]}")
+    if row[5]:
+        lines.append(f"• risposto: {row[5]}")
+    if row[6] is not None:
+        lines.append(f"• latenza_sec: {row[6]}")
+    if row[7]:
+        lines.append(f"• postura: {row[7]}")
+    return "\n".join(lines)

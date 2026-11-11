@@ -1,0 +1,828 @@
+"""Facet updater: closes the loop between check-in replies and subject_baseline.json.
+
+For each unprocessed reply in checkin_exchanges:
+1. Calls LLM to extract a behavioral observation from the reply text
+2. Updates subject_baseline.json with new confidence/value/observations
+3. Writes the observation to relic.db observations table
+4. Marks the exchange as processed
+
+Governance:
+- Uses InferredField from relic.profile.inferred_fields for confidence caps
+- Never produces clinical labels (FORBIDDEN_LABELS enforced)
+- Confidence caps: single source → 0.35, multi-source → 0.55 (until human review)
+- correction_state: if facet marked "corrected" by subject, updater skips it
+
+Usage:
+    python -m relic.checkin.facet_updater --subject-id testsubject
+    python -m relic.checkin.facet_updater --subject-id testsubject --dry-run
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
+from relic.profile.inferred_fields import (
+    DEFAULT_CONFIDENCE_CAP,
+    MULTI_EVIDENCE_CAP,
+    InferredField,
+    validate_inferred_field_value,
+)
+from relic.patterns.signal_extractor import FORBIDDEN_LABELS
+
+
+# Confidence string labels used in subject_baseline.json
+def _float_to_conf_label(c: float) -> str:
+    if c >= 0.70:
+        return "high"
+    if c >= 0.45:
+        return "medium"
+    if c >= 0.20:
+        return "low"
+    return "low_initial"
+
+
+def _conf_label_to_float(s: str) -> float:
+    return {"high": 0.75, "medium": 0.50, "low": 0.25, "low_initial": 0.10}.get(s, 0.10)
+
+
+# Map facet_id (relic.db) → subject_baseline.json section + key
+# The inverse of _BASELINE_TO_DB in question_engine.py
+_DB_TO_BASELINE: dict[str, tuple[str, str]] = {
+    "relational.loyalty_pattern":       ("psychological", "agreeableness"),
+    "relational.attachment_anxiety":    ("psychological", "attachment_anxiety"),
+    "relational.attachment_avoidance":  ("psychological", "attachment_avoidance"),
+    "temporal.deadline_behavior":       ("psychological", "conscientiousness"),
+    "emotional.distress_tolerance":     ("psychological", "emotional_stability"),
+    "relational.social_energy":         ("psychological", "extraversion"),
+    "cognitive.abstraction_level":      ("psychological", "openness"),
+    "meta_cognition.uncertainty_tolerance": ("interaction", "ambiguity_tolerance"),
+    "aesthetic.media_consumption":      ("interaction", "audio_tolerance"),
+    "relational.help_seeking":          ("interaction", "checkin_tolerance"),
+    "communication.conflict_style":     ("interaction", "critique_tolerance"),
+    "communication.directness":         ("interaction", "directness_preference"),
+    "aesthetic.design_sensibility":     ("interaction", "image_tolerance"),
+    "relational.boundary_style":        ("interaction", "proactive_contact_tolerance"),
+}
+
+EXTRACTION_SYSTEM_PROMPT = (
+    "Sei un assistente di ricerca comportamentale. Analizza il messaggio di risposta "
+    "e determina se fornisce informazioni utili sulla dimensione comportamentale indicata. "
+    "Rispondi SOLO con JSON valido. Non aggiungere testo fuori dal JSON. "
+    "Non usare mai etichette cliniche o diagnostiche."
+)
+
+EXTRACTION_PROMPT_TEMPLATE = """Analizza questa risposta e determina la posizione della persona sulla dimensione comportamentale.
+
+DIMENSIONE: {facet_name}
+DESCRIZIONE: {description}
+SPETTRO: {spectrum_low} (0.0) ↔ {spectrum_high} (1.0)
+
+DOMANDA POSTA: {question_text}
+RISPOSTA RICEVUTA: {reply_text}
+
+Rispondi con questo JSON esatto (nessun altro testo):
+{{
+  "informative": true/false,
+  "signal_position": 0.0-1.0 o null,
+  "signal_strength": 0.0-1.0,
+  "observation_summary": "descrizione breve e non-clinica dell'osservazione, max 120 chars",
+  "confidence_delta": 0.05-0.25
+}}
+
+Regole:
+- informative: true solo se la risposta dice qualcosa di concreto sulla dimensione
+- signal_position: posizione stimata sullo spettro 0.0-1.0, null se non determinabile
+- signal_strength: quanto è forte il segnale (0.1=debole, 0.9=forte)
+- observation_summary: MAI usare termini clinici ({forbidden})
+- confidence_delta: quanto aumenta la confidence (0.05 minimo, 0.25 massimo)"""
+
+
+MARKER_PROMOTION_THRESHOLD = 0.45
+
+
+@dataclass
+class ExtractionResult:
+    facet_id: str
+    exchange_id: int
+    informative: bool
+    signal_position: float | None
+    signal_strength: float
+    observation_summary: str
+    confidence_delta: float
+    error: str | None = None
+
+
+def _call_llm_extract(
+    facet_id: str,
+    facet_name: str,
+    description: str,
+    spectrum_low: str,
+    spectrum_high: str,
+    question_text: str,
+    reply_text: str,
+    llm_client: Any | None = None,
+) -> dict[str, Any] | None:
+    """Call LLM to extract behavioral signal. Returns parsed JSON or None on failure."""
+    forbidden_sample = ", ".join(list(FORBIDDEN_LABELS)[:6])
+    prompt = EXTRACTION_PROMPT_TEMPLATE.format(
+        facet_name=facet_name,
+        description=description,
+        spectrum_low=spectrum_low,
+        spectrum_high=spectrum_high,
+        question_text=question_text,
+        reply_text=reply_text[:500],
+        forbidden=forbidden_sample,
+    )
+
+    if llm_client is None:
+        import re as _re
+        import urllib.request as _urllib_request
+        endpoint = os.environ.get("RELIC_OLLAMA_ENDPOINT", "http://localhost:11434/v1")
+        model = os.environ.get("RELIC_OLLAMA_MODEL", "gemma4:31b-cloud")
+        _payload = json.dumps({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 1024,
+            "think": False,
+        }).encode("utf-8")
+        req = _urllib_request.Request(
+            f"{endpoint}/chat/completions",
+            data=_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _urllib_request.urlopen(req, timeout=90) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                msg = data["choices"][0]["message"]
+                text = (msg.get("content") or msg.get("reasoning") or "").strip()
+                text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
+                start = text.find("{")
+                end = text.rfind("}") + 1
+                if start >= 0 and end > start:
+                    return json.loads(text[start:end])
+        except Exception:
+            pass
+        return None
+
+    return llm_client(EXTRACTION_SYSTEM_PROMPT, prompt)
+
+
+def extract_observation(
+    exchange_id: int,
+    facet_id: str,
+    facet_name: str,
+    description: str,
+    spectrum_low: str,
+    spectrum_high: str,
+    question_text: str,
+    reply_text: str,
+    llm_client: Any | None = None,
+) -> ExtractionResult:
+    """Extract behavioral observation from a check-in reply."""
+    result = _call_llm_extract(
+        facet_id, facet_name, description, spectrum_low, spectrum_high,
+        question_text, reply_text, llm_client,
+    )
+
+    if result is None:
+        return ExtractionResult(
+            facet_id=facet_id, exchange_id=exchange_id,
+            informative=False, signal_position=None,
+            signal_strength=0.0, observation_summary="",
+            confidence_delta=0.0, error="llm_unavailable",
+        )
+
+    if not result.get("informative", False):
+        return ExtractionResult(
+            facet_id=facet_id, exchange_id=exchange_id,
+            informative=False, signal_position=None,
+            signal_strength=float(result.get("signal_strength", 0.0)),
+            observation_summary="", confidence_delta=0.0,
+        )
+
+    summary = str(result.get("observation_summary", ""))[:120]
+    # Governance: check for forbidden clinical terms
+    summary_lower = summary.lower()
+    for term in FORBIDDEN_LABELS:
+        if term in summary_lower:
+            summary = summary.replace(term, "[removed]")
+
+    return ExtractionResult(
+        facet_id=facet_id,
+        exchange_id=exchange_id,
+        informative=True,
+        signal_position=float(result["signal_position"]) if result.get("signal_position") is not None else None,
+        signal_strength=min(1.0, max(0.0, float(result.get("signal_strength", 0.5)))),
+        observation_summary=summary,
+        confidence_delta=min(0.25, max(0.05, float(result.get("confidence_delta", 0.10)))),
+    )
+
+
+def update_baseline(
+    baseline_path: Path,
+    facet_id: str,
+    extraction: ExtractionResult,
+    exchange_id: int,
+) -> bool:
+    """Update subject_baseline.json with new observation. Returns True if changed."""
+    if not baseline_path.exists():
+        return False
+
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    section, key = _DB_TO_BASELINE.get(facet_id, (None, None))
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    if section and key:
+        # Update known bootstrap facet
+        facet_entry = baseline.setdefault(section, {}).setdefault(key, {})
+        current_conf = _conf_label_to_float(str(facet_entry.get("confidence", "low_initial")))
+        # Apply governance caps via InferredField
+        source_refs = [f"exchange:{exchange_id}"]
+        field_obj = InferredField(
+            field_name=f"{section}.{key}",
+            value=extraction.signal_position,
+            confidence=min(current_conf + extraction.confidence_delta, MULTI_EVIDENCE_CAP),
+            source_refs=source_refs,
+        )
+        new_conf = field_obj.confidence
+        facet_entry["confidence"] = _float_to_conf_label(new_conf)
+        facet_entry["confidence_float"] = round(new_conf, 4)
+        if extraction.signal_position is not None:
+            # Weighted update: 70% prior, 30% new signal (conservative for first observations)
+            prior_val = float(facet_entry.get("value", 0.5) or 0.5)
+            weight = 0.30 + 0.10 * min(extraction.signal_strength, 1.0)
+            facet_entry["value"] = round((1 - weight) * prior_val + weight * extraction.signal_position, 4)
+        facet_entry["observations"] = int(facet_entry.get("observations", 0)) + 1
+        facet_entry["last_updated"] = now
+        facet_entry["last_source"] = f"checkin_exchange:{exchange_id}"
+    else:
+        # Facet not in baseline yet: add to extended_facets
+        extended = baseline.setdefault("extended_facets", {})
+        entry = extended.setdefault(facet_id, {
+            "confidence": "low_initial",
+            "confidence_float": 0.0,
+            "value": None,
+            "observations": 0,
+        })
+        current_conf = float(entry.get("confidence_float", 0.0))
+        new_conf = min(current_conf + extraction.confidence_delta, MULTI_EVIDENCE_CAP)
+        entry["confidence_float"] = round(new_conf, 4)
+        entry["confidence"] = _float_to_conf_label(new_conf)
+        if extraction.signal_position is not None:
+            prior_val = float(entry.get("value") or 0.5)
+            weight = 0.30 + 0.10 * min(extraction.signal_strength, 1.0)
+            entry["value"] = round((1 - weight) * prior_val + weight * extraction.signal_position, 4)
+        entry["observations"] = int(entry.get("observations", 0)) + 1
+        entry["last_updated"] = now
+        entry["last_source"] = f"checkin_exchange:{exchange_id}"
+
+    baseline["last_checkin_update"] = now
+    baseline_path.write_text(
+        json.dumps(baseline, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return True
+
+
+def _promote_observation_to_marker(
+    extraction: ExtractionResult,
+    subject_id: str,
+    gumi_instance_id: str = "",
+    hermes_profile_id: str = "",
+    continuity_store: Any | None = None,
+) -> None:
+    """Store a strong check-in observation as an UNCONFIRMED candidate marker.
+
+    A check-in observation is system inference, not subject-confirmed wording, so
+    it must NOT be written as a subject_confirmed marker. It is stored via
+    propose_candidate() with source_type="hindsight" and
+    candidate_for_confirmation=True, which keeps it out of runtime recall
+    (recent_markers) until the subject explicitly confirms it. Answering a
+    check-in is not, by itself, confirmation of a proposed marker's wording.
+
+    Dedup: skips if an existing marker already encodes the same observation text
+    (exact match on joined subject_words) to prevent re-run duplicates.
+
+    Only called when signal_strength >= MARKER_PROMOTION_THRESHOLD.
+    Fail-open: any error is logged at WARNING level and silently ignored.
+    """
+    if extraction.signal_strength < MARKER_PROMOTION_THRESHOLD:
+        return
+    if not extraction.observation_summary:
+        return
+    try:
+        target_norm = " ".join(extraction.observation_summary.split())
+        if continuity_store is not None:
+            profile_id = hermes_profile_id or HERMES_USER_PROFILE_NAME
+            existing = continuity_store.get_recent_candidates(
+                runtime_scope_id=subject_id,
+                hermes_profile_id=profile_id,
+                limit=50,
+            )
+            for marker in existing:
+                words = marker.get("user_words") or []
+                if " ".join(str(word) for word in words).strip() == target_norm:
+                    return
+            continuity_store.propose_candidate(
+                runtime_scope_id=subject_id,
+                user_words=target_norm.split(),
+                source_type="hindsight",
+                hermes_profile_id=profile_id,
+            )
+            return
+        from relic.gumi_continuity.store import GumiContinuityStore
+
+        # ContinuityService.remember() requires all three IDs to be non-empty
+        # (raises BLOCKED_MARKER_WITHOUT_SUBJECT_SCOPE otherwise).
+        # Fall back to subject_id sentinel: consistent with registry.py pattern.
+        _gumi = gumi_instance_id or subject_id
+        _hermes = hermes_profile_id or subject_id
+
+        store = GumiContinuityStore()
+        target_norm = " ".join(extraction.observation_summary.split())
+
+        # Dedup: skip if any recent marker already has the same observation text.
+        # Normalize whitespace on both sides to avoid false negatives.
+        existing = store.get_recent_markers(
+            subject_id=subject_id,
+            gumi_instance_id=_gumi or None,
+            hermes_profile_id=_hermes or None,
+            limit=50,
+        )
+        for m in existing:
+            words = m.get("subject_words") or m.get("words") or []
+            if isinstance(words, list):
+                existing_text = " ".join(str(w) for w in words)
+            else:
+                existing_text = str(words)
+            if " ".join(existing_text.split()) == target_norm:
+                return
+
+        store.propose_candidate(
+            subject_id=subject_id,
+            gumi_instance_id=_gumi,
+            hermes_profile_id=_hermes,
+            subject_words=target_norm.split(),
+            source_type="hindsight",
+            ttl_seconds=1_209_600,  # 2 weeks
+        )
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "_promote_observation_to_marker failed subject=%s facet=%s: %s",
+            subject_id, extraction.facet_id, exc,
+        )
+
+
+def process_pending_exchanges(
+    conn: sqlite3.Connection,
+    baseline_path: Path,
+    subject_id: str,
+    dry_run: bool = False,
+    llm_client: Any | None = None,
+    gumi_instance_id: str = "",
+    hermes_profile_id: str = "",
+    continuity_store: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Process all unprocessed check-in replies. Returns list of results."""
+    rows = conn.execute(
+        """SELECT ce.id, ce.facet_id, ce.question_text, ce.reply_text,
+                  f.name, f.description, f.spectrum_low, f.spectrum_high
+           FROM checkin_exchanges ce
+           JOIN facets f ON f.id = ce.facet_id
+           WHERE ce.reply_text IS NOT NULL
+             AND ce.observations_extracted = 0
+           ORDER BY ce.asked_at ASC"""
+    ).fetchall()
+
+    results = []
+    for row in rows:
+        exchange_id, facet_id, question_text, reply_text, \
+            facet_name, description, spectrum_low, spectrum_high = row
+
+        extraction = extract_observation(
+            exchange_id=exchange_id,
+            facet_id=facet_id,
+            facet_name=facet_name or facet_id,
+            description=description or "",
+            spectrum_low=spectrum_low or "low",
+            spectrum_high=spectrum_high or "high",
+            question_text=question_text,
+            reply_text=reply_text,
+            llm_client=llm_client,
+        )
+
+        entry: dict[str, Any] = {
+            "exchange_id": exchange_id,
+            "facet_id": facet_id,
+            "informative": extraction.informative,
+            "error": extraction.error,
+        }
+
+        if extraction.error:
+            results.append(entry)
+            continue
+
+        if extraction.informative and not dry_run:
+            # Write observation to db
+            now_iso = datetime.now(timezone.utc).isoformat()
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO observations
+                       (facet_id, source_type, source_ref, content, extracted_signal,
+                        signal_strength, signal_position, created_at)
+                       VALUES (?, 'checkin_reply', ?, ?, ?, ?, ?, ?)""",
+                    (
+                        facet_id,
+                        f"exchange:{exchange_id}",
+                        extraction.observation_summary,
+                        json.dumps({"question": question_text[:100]}),
+                        extraction.signal_strength,
+                        extraction.signal_position,
+                        now_iso,
+                    ),
+                )
+                # Update traits table
+                conn.execute(
+                    """INSERT INTO traits (facet_id, value_position, confidence, observation_count, last_observation_at)
+                       VALUES (?, ?, ?, 1, ?)
+                       ON CONFLICT(facet_id) DO UPDATE SET
+                           value_position = CASE
+                               WHEN excluded.value_position IS NULL THEN traits.value_position
+                               WHEN traits.value_position IS NULL THEN excluded.value_position
+                               ELSE 0.7*traits.value_position + 0.3*excluded.value_position
+                           END,
+                           confidence = MIN(traits.confidence + ?, ?),
+                           observation_count = traits.observation_count + 1,
+                           last_observation_at = excluded.last_observation_at""",
+                    (
+                        facet_id,
+                        extraction.signal_position,
+                        min(extraction.confidence_delta + 0.10, DEFAULT_CONFIDENCE_CAP),
+                        now_iso,
+                        extraction.confidence_delta,
+                        MULTI_EVIDENCE_CAP,
+                    ),
+                )
+                conn.commit()
+            except sqlite3.Error:
+                conn.rollback()
+
+            # Update baseline JSON
+            update_baseline(baseline_path, facet_id, extraction, exchange_id)
+
+            # Promote strong observations to ContinuityMarker for prefetch()
+            _promote_observation_to_marker(
+                extraction,
+                subject_id,
+                gumi_instance_id,
+                hermes_profile_id,
+                continuity_store=continuity_store,
+            )
+
+            entry.update({
+                "signal_position": extraction.signal_position,
+                "signal_strength": extraction.signal_strength,
+                "confidence_delta": extraction.confidence_delta,
+                "observation_summary": extraction.observation_summary,
+            })
+
+        if not dry_run:
+            conn.execute(
+                "UPDATE checkin_exchanges SET observations_extracted = 1 WHERE id = ?",
+                (exchange_id,),
+            )
+            conn.commit()
+
+        results.append(entry)
+
+    # Re-derive trait confidence from accumulated evidence (debounced), then
+    # snapshot. Synthesis runs even when no new replies were pending, so abundant
+    # passive evidence keeps lifting confidence on schedule.
+    if not dry_run:
+        if _synthesis_needs_update(conn):
+            synthesize_traits(conn)
+        maybe_write_snapshot(conn, reason="checkin")
+
+    return results
+
+
+# Batch-synthesis tuning.
+_SYNTHESIS_FULL_EVIDENCE_N = 8        # consistent observations that count as full evidence
+_SYNTHESIS_MAX_SPREAD = 0.5          # signal_position std-dev (0..1 scale) at which consistency → 0
+_SYNTHESIS_MIN_INTERVAL_HOURS = 20   # debounce when wired into the check-in probe
+
+
+def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, x))
+
+
+def _synthesis_needs_update(conn: sqlite3.Connection, now: datetime | None = None) -> bool:
+    """True when no trait has been synthesised within the debounce window."""
+    from datetime import timedelta
+
+    now = now or datetime.now(timezone.utc)
+    row = conn.execute("SELECT MAX(last_synthesis_at) FROM traits").fetchone()
+    last = row[0] if row else None
+    if not last:
+        return True
+    try:
+        last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+    except (ValueError, AttributeError):
+        return True
+    return (now - last_dt) >= timedelta(hours=_SYNTHESIS_MIN_INTERVAL_HOURS)
+
+
+def synthesize_traits(
+    conn: sqlite3.Connection,
+    *,
+    dry_run: bool = False,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Re-derive trait confidence/value_position from ALL accumulated observations.
+
+    The incremental check-in path only nudges a trait per reply, so facets with
+    abundant evidence (e.g. 80 passive observations) stay stuck at low confidence.
+    This batch pass aggregates every observation for a facet into a strength-
+    weighted estimate, raising confidence toward the governance cap where the
+    evidence supports it.
+
+    Governance:
+      - confidence capped at MULTI_EVIDENCE_CAP (0.55) until human review;
+      - monotonic — only raises confidence, never lowers an existing (possibly
+        human-reviewed) value, and touches a facet only when the evidence
+        justifies MORE confidence than is currently stored;
+      - skips facets the subject has corrected.
+
+    Returns a list of change records (also the preview payload for --dry-run).
+    """
+    now = now or datetime.now(timezone.utc)
+    agg = conn.execute(
+        """SELECT facet_id,
+                  COUNT(*) AS n,
+                  SUM(COALESCE(NULLIF(signal_strength, 0), 0.5)) AS wsum,
+                  SUM(signal_position * COALESCE(NULLIF(signal_strength, 0), 0.5)) AS wpos,
+                  SUM(signal_position * signal_position
+                      * COALESCE(NULLIF(signal_strength, 0), 0.5)) AS wpos2,
+                  MAX(created_at) AS last_obs
+           FROM observations
+           WHERE signal_position IS NOT NULL
+           GROUP BY facet_id"""
+    ).fetchall()
+
+    current = {
+        r[0]: {"confidence": r[1], "value_position": r[2], "status": r[3]}
+        for r in conn.execute(
+            "SELECT facet_id, confidence, value_position, status FROM traits"
+        )
+    }
+
+    changes: list[dict[str, Any]] = []
+    for facet_id, n, wsum, wpos, wpos2, last_obs in agg:
+        cur = current.get(facet_id)
+        if cur is not None and cur["status"] == "corrected":
+            continue
+        if not wsum or wsum <= 0:
+            continue
+        mean = wpos / wsum
+        var = max(0.0, (wpos2 / wsum) - mean * mean)
+        sd = var ** 0.5
+        consistency = _clamp(1.0 - sd / _SYNTHESIS_MAX_SPREAD)
+        evidence = _clamp(n / _SYNTHESIS_FULL_EVIDENCE_N)
+        computed = min(_clamp(evidence * (0.4 + 0.6 * consistency)), MULTI_EVIDENCE_CAP)
+
+        old_conf = cur["confidence"] if cur else None
+        if old_conf is not None and computed <= old_conf:
+            continue  # evidence does not justify a higher confidence — leave it
+
+        new_pos = round(_clamp(mean), 6)
+        new_conf = round(computed, 6)
+        changes.append({
+            "facet_id": facet_id,
+            "n": n,
+            "old_conf": round(old_conf, 4) if old_conf is not None else None,
+            "new_conf": new_conf,
+            "old_pos": round(cur["value_position"], 4) if cur and cur["value_position"] is not None else None,
+            "new_pos": new_pos,
+        })
+        if not dry_run:
+            conn.execute(
+                """INSERT INTO traits (facet_id, value_position, confidence,
+                       observation_count, last_observation_at, last_synthesis_at, status)
+                   VALUES (?, ?, ?, ?, ?, ?, 'active')
+                   ON CONFLICT(facet_id) DO UPDATE SET
+                       value_position = excluded.value_position,
+                       confidence = excluded.confidence,
+                       observation_count = excluded.observation_count,
+                       last_observation_at = excluded.last_observation_at,
+                       last_synthesis_at = excluded.last_synthesis_at""",
+                (facet_id, new_pos, new_conf, n, last_obs, now.isoformat()),
+            )
+    if not dry_run and changes:
+        conn.commit()
+    return changes
+
+
+def write_snapshot(conn: sqlite3.Connection, reason: str = "checkin") -> dict[str, Any]:
+    """Write a model_snapshots row reflecting current traits state.
+
+    Returns a dict with the snapshot stats (for logging/testing).
+    Never raises, failure is logged and the caller continues.
+    """
+    try:
+        cols = [
+            "facet_id", "value_position", "confidence", "observation_count",
+            "last_observation_at", "last_synthesis_at", "status", "notes",
+        ]
+        rows = conn.execute(
+            "SELECT facet_id, value_position, confidence, observation_count, "
+            "last_observation_at, last_synthesis_at, status, notes FROM traits"
+        ).fetchall()
+        snap_data = [dict(zip(cols, r)) for r in rows]
+
+        total = len(snap_data)
+        with_data = sum(
+            1 for r in snap_data
+            if r["value_position"] is not None and (r["observation_count"] or 0) > 0
+        )
+        confidences = [r["confidence"] for r in snap_data if r["confidence"] is not None]
+        avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+        cov_pct = 100.0 * with_data / total if total else 0.0
+
+        total_obs = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # Attach trigger reason to snapshot_data header
+        payload = {"reason": reason, "facets": snap_data}
+
+        conn.execute(
+            "INSERT INTO model_snapshots "
+            "(snapshot_at, total_observations, avg_confidence, coverage_pct, snapshot_data) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (now_iso, total_obs, avg_conf, cov_pct, json.dumps(payload)),
+        )
+        conn.commit()
+        return {
+            "snapshot_at": now_iso,
+            "total_observations": total_obs,
+            "avg_confidence": avg_conf,
+            "coverage_pct": cov_pct,
+            "facets_total": total,
+            "facets_with_data": with_data,
+            "reason": reason,
+        }
+    except Exception as exc:
+        import logging
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logging.getLogger(__name__).warning("model_snapshots write failed: %s", exc)
+        return {}
+
+
+def _snapshot_needs_update(conn: sqlite3.Connection) -> bool:
+    """Return True if a new snapshot is warranted (model changed AND debounce elapsed).
+
+    Change criteria (any one sufficient):
+      - total_observations increased since last snapshot
+      - any facet confidence changed by >= 0.05
+      - any facet value_position changed
+      - coverage_pct changed
+
+    Debounce: at least 1h since last snapshot.
+    """
+    from datetime import timedelta
+
+    row = conn.execute(
+        "SELECT snapshot_at, total_observations, snapshot_data FROM model_snapshots "
+        "ORDER BY snapshot_at DESC LIMIT 1"
+    ).fetchone()
+
+    if row is None:
+        return True  # no snapshots ever, write one
+
+    last_at_str, last_obs, last_data_json = row
+
+    # Debounce: skip if last snapshot < 1h ago
+    try:
+        last_at = datetime.fromisoformat(last_at_str)
+        if datetime.now(timezone.utc) - last_at < timedelta(hours=1):
+            return False
+    except (ValueError, TypeError):
+        pass  # malformed timestamp, proceed
+
+    # Check observation count
+    current_obs = conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+    if current_obs != (last_obs or 0):
+        return True
+
+    # Check trait-level changes vs snapshot_data
+    try:
+        last_payload = json.loads(last_data_json or "{}") if last_data_json else {}
+        # Support both old list format and new {"reason":..., "facets":[...]} format
+        last_facets_list = (
+            last_payload.get("facets", last_payload)
+            if isinstance(last_payload, dict)
+            else last_payload
+        )
+        last_facets = {
+            r["facet_id"]: r
+            for r in last_facets_list
+            if isinstance(r, dict) and "facet_id" in r
+        }
+        current_rows = conn.execute(
+            "SELECT facet_id, value_position, confidence FROM traits"
+        ).fetchall()
+        for facet_id, vp, conf in current_rows:
+            prev = last_facets.get(facet_id, {})
+            prev_conf = prev.get("confidence")
+            prev_vp = prev.get("value_position")
+            if prev_conf is None and conf is not None:
+                return True
+            if conf is not None and prev_conf is not None and abs(conf - prev_conf) >= 0.05:
+                return True
+            if vp != prev_vp:
+                return True
+    except Exception:
+        return True  # parse failure, be conservative and write
+
+    return False
+
+
+def maybe_write_snapshot(
+    conn: sqlite3.Connection, reason: str = "checkin"
+) -> dict[str, Any]:
+    """Write a snapshot if the model changed AND debounce elapsed. Fail-soft."""
+    if _snapshot_needs_update(conn):
+        return write_snapshot(conn, reason=reason)
+    return {}
+
+
+def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="Process check-in replies → facet updates")
+    parser.add_argument("--subject-id", required=True)
+    parser.add_argument("--db-path", default=None)
+    parser.add_argument("--baseline-path", default=None)
+    parser.add_argument("--relic-home", default=None)
+    parser.add_argument("--gumi-instance-id", default="")
+    parser.add_argument("--hermes-profile-id", default="")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--synthesize", action="store_true",
+        help="Run a batch trait re-synthesis over all observations (force, ignores debounce).",
+    )
+    parser.add_argument(
+        "--synth-only", action="store_true",
+        help="Only run synthesis; skip check-in reply extraction.",
+    )
+    args = parser.parse_args()
+
+    relic_home = args.relic_home or os.environ.get("RELIC_HOME", str(Path.home() / ".relic"))
+    db_path = Path(args.db_path) if args.db_path else \
+              Path(relic_home) / "subjects" / args.subject_id / "relic.db"
+    baseline_path = Path(args.baseline_path) if args.baseline_path else \
+                    Path(relic_home) / "subjects" / args.subject_id / "subject_baseline.json"
+
+    conn = sqlite3.connect(str(db_path))
+    results = []
+    if not args.synth_only:
+        results = process_pending_exchanges(
+            conn, baseline_path, args.subject_id,
+            dry_run=args.dry_run,
+            gumi_instance_id=args.gumi_instance_id,
+            hermes_profile_id=args.hermes_profile_id,
+        )
+    synth_changes = None
+    if args.synthesize or args.synth_only:
+        synth_changes = synthesize_traits(conn, dry_run=args.dry_run)
+    conn.close()
+
+    print(json.dumps({
+        "status": "ok",
+        "dry_run": args.dry_run,
+        "processed": len(results),
+        "informative": sum(1 for r in results if r.get("informative")),
+        "results": results,
+        "synthesis": synth_changes,
+        "synthesis_count": len(synth_changes) if synth_changes is not None else None,
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

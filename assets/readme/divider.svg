@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 830 12" width="830" height="12" role="img" aria-labelledby="ttl dsc">
+<title id="ttl">Section divider</title>
+<desc id="dsc">Hairline rule with a crimson run at the left, fading tick marks and a cyan end cap at the right.</desc>
+
+<defs>
+<filter id="glow" x="-400%" y="-400%" width="900%" height="900%">
+<feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#ff003c" flood-opacity="0.5"/>
+</filter>
+</defs>
+<rect y="5.5" width="830" height="1" fill="#6e2d38"/>
+<rect y="4" width="44" height="3" fill="#9a3a48"/>
+<rect x="52" y="3.5" width="76" height="4" fill="#ff003c" filter="url(#glow)"/>
+<rect x="136" y="3.5" width="1" height="5" fill="#9a3a48" opacity="0.9"/><rect x="148" y="3.5" width="1" height="5" fill="#9a3a48" opacity="0.75"/><rect x="160" y="3.5" width="1" height="5" fill="#9a3a48" opacity="0.6"/><rect x="172" y="3.5" width="1" height="5" fill="#9a3a48" opacity="0.45"/><rect x="184" y="3.5" width="1" height="5" fill="#9a3a48" opacity="0.3"/>
+<rect x="792" y="3" width="2" height="6" fill="#00e5ff" opacity="0.8"/>
+<rect x="800" y="4.5" width="30" height="3" fill="#9a3a48"/>
+</svg>

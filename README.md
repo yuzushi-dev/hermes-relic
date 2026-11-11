@@ -1,11 +1,7 @@
 <!-- Visual assets follow RIS - Relic Interface System (cyber77 theme). -->
-<div align="center">
-  <img src="assets/readme/header.png" width="830" alt="RELIC GUMI: a local, longitudinal AI companion for Hermes Agent.">
-</div>
-
 <p align="center">
   <a href="assets/readme/showcase.mp4">
-    <img src="assets/readme/showcase.gif" width="720" alt="RELIC GUMI showcase: the 60-facet dashboard. Click to watch the full 60-second video.">
+    <img src="assets/readme/header.png" width="830" alt="RELIC GUMI: a local, longitudinal AI companion for Hermes Agent. Click to watch the 60-second showcase.">
   </a>
 </p>
 

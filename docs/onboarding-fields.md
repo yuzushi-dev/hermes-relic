@@ -60,7 +60,7 @@ labels them Images, Audio and Music.
 | `freq` | choice | Custom, only if `armed` = yes | Maximum frequency? | 1 per day, 2 per day, 3 per week | `gumi_profile.preferences.proactivity.maximum_frequency` | `user_runtime` (cadence) |
 | `quiet` | text | Custom, only if `armed` = yes | Quiet hours as HH:MM-HH:MM (validated) | free text, or Keep 22:00-08:00 | `gumi_profile.preferences.proactivity.quiet_hours` | `user_runtime` (quiet hours) |
 | `c_act` | choice | always | May I ask you questions on my own to get to know you better? | Yes (recommended), No | `user/checkin/delivery_policy.json: consent_for_active_elicitation` | follow-up chain, reply capture |
-| `c_pas` | choice | always | May I learn from what you write in our chats? Classifiers are local by default; explicitly configured remote classifiers receive chat excerpts (including Ollama Cloud at ollama.com if selected). | Yes (recommended), No | `user/checkin/delivery_policy.json: consent_for_passive_extraction` | passive extraction |
+| `c_pas` | choice | always | May I learn from what you write in our chats? Classifiers are local by default; explicitly configured remote classifiers receive chat excerpts (including Ollama Cloud at ollama.com if selected). Separately enabled Google media (Gemini/Lyria, generativelanguage.googleapis.com) may receive text and recent chat/memory context; this consent does not enable it. | Yes (recommended), No | `user/checkin/delivery_policy.json: consent_for_passive_extraction` | passive extraction |
 | `confirm` | choice | always | Summary of your answers | Save, Start over | none | - |
 
 The safety questions (`safe1` and `safe2`) list "No" first. `exclusivity_language`
@@ -154,7 +154,13 @@ These keep their defaults. They can be added once something reads them.
 - **Gemini API key.** A key typed into Telegram would stay in the chat
   history. Put `GEMINI_API_KEY` in the profile `.env` yourself. Without it,
   media you picked stay `selected: true, enabled: false` with a remediation
-  note; add the key and run `/gumi-setup` again.
+  note; add the key and run `/gumi-setup` again. Delivery additionally requires
+  your explicit `RELIC_ENABLE_GOOGLE_MEDIA=1` in that environment; a key alone
+  is not consent. Google (`generativelanguage.googleapis.com`, Gemini/Lyria)
+  can receive voice text, prompts and recent chat/memory context. Current
+  ComfyUI/ACE-Step rendering is local, but Google prompt-generation fallbacks
+  mean the same delivery gate covers those branches too. Passive-extraction
+  consent (`c_pas`) never enables media or sets this flag.
 - **Telegram bot token.** It is already in the profile `.env`; onboarding uses
   the connected bot and never asks for it.
 

@@ -164,7 +164,15 @@ def parse_gate_output(llm_output: str) -> dict:
 
 
 def _get_api_key() -> Optional[str]:
-    """GEMINI_API_KEY from the process environment, which Hermes fills for the profile."""
+    """Expose the key only after an explicit opt-in to Google media processing.
+
+    Hermes may already have a Google key for unrelated tools. That alone is
+    not permission to send companion content to Google. The media pipelines
+    share this gate, including local image/music backends with Google prompt
+    generation fallbacks.
+    """
+    if os.environ.get("RELIC_ENABLE_GOOGLE_MEDIA") != "1":
+        return None
     return os.environ.get("GEMINI_API_KEY")
 
 

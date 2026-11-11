@@ -71,6 +71,26 @@ def _allow_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.mark.parametrize("tipo", ("voice", "image", "music"))
+def test_ambient_key_cannot_start_media_without_explicit_opt_in(tmp_path, monkeypatch, tipo):
+    relic_home = _write_user_state(tmp_path)
+    monkeypatch.setenv("RELIC_HOME", str(relic_home))
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.delenv("RELIC_ENABLE_GOOGLE_MEDIA", raising=False)
+    _allow_lifecycle(monkeypatch)
+    monkeypatch.setattr(dispatcher, "synthesize_checkin_audio", pytest.fail)
+    monkeypatch.setattr(dispatcher, "generate_checkin_image", pytest.fail)
+    monkeypatch.setattr(dispatcher, "LyriaGenerator", pytest.fail)
+    monkeypatch.setattr(image_gen, "generate_image", pytest.fail)
+    monkeypatch.setattr("requests.post", pytest.fail)
+    result = dispatcher.dispatch(
+        f"tipo: {tipo}\nSynthetic companion text",
+        hermes_home=tmp_path / "hermes",
+        relic_user_home=relic_home / "user",
+    )
+    assert result == {"tipo": tipo, "success": False, "reason": "no_api_key"}
+
+
 @pytest.mark.parametrize("tipo", ("text", "voice", "image", "music"))
 def test_revoked_canonical_user_blocks_every_delivery_branch(
     tmp_path: Path,
@@ -80,6 +100,8 @@ def test_revoked_canonical_user_blocks_every_delivery_branch(
 ) -> None:
     relic_home = _write_user_state(tmp_path, capability=True, armed=False)
     monkeypatch.setenv("RELIC_HOME", str(relic_home))
+    # These tests exercise explicitly enabled media, not ambient credentials.
+    monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "a" * 35)
     _allow_lifecycle(monkeypatch)
     monkeypatch.setattr(dispatcher, "_send_telegram_text", pytest.fail)
@@ -248,6 +270,8 @@ def test_voice_branch_sanitizes_source_before_synthesis(
 ) -> None:
     relic_home = _write_user_state(tmp_path)
     monkeypatch.setenv("RELIC_HOME", str(relic_home))
+    # These tests exercise explicitly enabled media, not ambient credentials.
+    monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "a" * 35)
     _allow_lifecycle(monkeypatch)
     captured: dict[str, str] = {}
@@ -303,6 +327,8 @@ def test_image_branch_sanitizes_caption_and_generation_prompt(
 ) -> None:
     relic_home = _write_user_state(tmp_path)
     monkeypatch.setenv("RELIC_HOME", str(relic_home))
+    # These tests exercise explicitly enabled media, not ambient credentials.
+    monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "a" * 35)
     _allow_lifecycle(monkeypatch)
     monkeypatch.setattr(
@@ -345,6 +371,8 @@ def test_music_branch_sanitizes_prompt_and_title_source(
 ) -> None:
     relic_home = _write_user_state(tmp_path)
     monkeypatch.setenv("RELIC_HOME", str(relic_home))
+    # These tests exercise explicitly enabled media, not ambient credentials.
+    monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "a" * 35)
     _allow_lifecycle(monkeypatch)
     captured: dict[str, str] = {}
@@ -456,6 +484,8 @@ def test_music_performer_ignores_legacy_metadata(
 ) -> None:
     relic_home = _write_user_state(tmp_path)
     monkeypatch.setenv("RELIC_HOME", str(relic_home))
+    # These tests exercise explicitly enabled media, not ambient credentials.
+    monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", "1")
     monkeypatch.setenv("GEMINI_API_KEY", "AIza" + "a" * 35)
     _allow_lifecycle(monkeypatch)
     legacy_profile = relic_home / "user" / "gumi_background_profile.json"

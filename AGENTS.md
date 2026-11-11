@@ -14,6 +14,7 @@ You are an agent (Claude, Codex, Hermes or another) installing the relic-gumi pl
 - Do NOT answer the onboarding questions yourself, do NOT choose preferences, consents, timezone, name or battery answers for the user, do NOT edit by hand the files in `$RELIC_HOME/user/`, do NOT set `consent_for_*`.
 - Onboarding happens ONLY in the user's own chat: Telegram with their bot, or `/gumi-setup` in the Hermes Desktop chat panel, CLI or TUI. If the user asks you to do it, refuse and send them there.
 - Do not ask for Gemini keys or other media secrets during onboarding.
+- Classifiers are local by default; conversation inference uses the user's Hermes provider and may be remote. Never claim the whole plugin runs fully locally. Do not enable remote classifiers or Google media on the user's behalf. Google media requires the user's explicit `RELIC_ENABLE_GOOGLE_MEDIA=1` plus `GEMINI_API_KEY`; prompts, voice text and recent chat/memory context may be sent to `generativelanguage.googleapis.com` (Gemini/Lyria). The shared gate also covers local media renderers because of Google prompt fallbacks.
 
 ## End of your task
 When the gateway and verify are fine and the user has been told to send `/start`, you are done. Do not wait for the outcome of the onboarding.

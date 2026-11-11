@@ -224,8 +224,14 @@ def build_questions() -> list[Question]:
         Question(
             "c_pas",
             "choice",
-            "May I learn from our chats? Local classifiers by default; remote opt-in sends excerpts to your chosen host (e.g. Ollama Cloud, ollama.com).",
+            "May I learn from our chats? Local classifiers by default; opt-in hosts (Ollama Cloud/Google media) receive text. See privacy notice.",
             _recommended_yes_no(),
+            preamble=(
+                "Privacy notice: remote classifier opt-in sends chat excerpts to your chosen host "
+                "(including Ollama Cloud, ollama.com). Separately enabled Google media "
+                "(Gemini/Lyria, generativelanguage.googleapis.com) may receive text and recent "
+                "chat/memory context. This consent does not enable cloud media."
+            ),
         ),
         Question(
             "confirm",

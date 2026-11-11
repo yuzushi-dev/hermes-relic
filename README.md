@@ -10,6 +10,8 @@
 **Gumi is a companion that gets to know you, and helps you reflect on who you are. It builds a longitudinal model of you from published psychometric instruments (TIPI for the Big Five, ECR-RS for attachment) used as a self-report baseline, plus your consented check-ins, and it runs on your machine: nothing built into this package sends what it learns about you anywhere.**
 
 > **Paper:** Veri', D. (2026). [*Relic and Gumi: Governing Memory, Safety, and Continuity in Diegetic Relational Agents*](https://arxiv.org/abs/2611.08504). arXiv:2611.08504 [cs.HC]. The paper presents the architecture and an exploratory two-participant pilot; it makes no claims of clinical efficacy or diagnosis, and neither does this plugin. Gumi supports introspection, it is not a diagnostic tool.
+>
+> **Live demo:** [yuzushi-dev.github.io/Relic](https://yuzushi-dev.github.io/Relic/), the researcher workbench of the parent project [`relic-oss`](https://github.com/yuzushi-dev/Relic), running on synthetic data only.
 
 <div align="center">
   <img src="assets/readme/divider.svg" width="830" alt="Section divider">

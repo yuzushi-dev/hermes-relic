@@ -180,6 +180,7 @@ def _spawn_dispatch(
             start_new_session=True,
             env=environment,
         )
+        assert process.stdin is not None
         # Secrets cross only a private inherited pipe, never argv, logs or env.
         try:
             process.stdin.write(json.dumps(credentials))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from tests.secret_fakes import seed_credentials
 
 pytestmark = pytest.mark.usefixtures("scoped_secrets")
@@ -9,7 +10,6 @@ import os
 from io import StringIO
 from pathlib import Path
 
-import pytest
 
 from relic.profile import user_onboarding
 from relic.profile.registry import MultipleLegacyProfilesError, ProfileRegistry

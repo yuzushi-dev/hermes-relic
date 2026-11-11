@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from tests.secret_fakes import seed_credentials
 
 pytestmark = pytest.mark.usefixtures("scoped_secrets")
@@ -14,7 +15,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 
-import pytest
 from relic.hermes_plugin.install import HermesLocation, Installer
 
 from relic.profile.registry import ProfileRegistry

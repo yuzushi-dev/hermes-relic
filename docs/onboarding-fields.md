@@ -155,7 +155,8 @@ These keep their defaults. They can be added once something reads them.
 ## Never asked in chat
 
 - **Gemini API key.** A key typed into Telegram would stay in the chat
-  history. Put `GEMINI_API_KEY` in the profile `.env` yourself. Without it,
+  history. Run `hermes --profile relic-gumi config set GEMINI_API_KEY`
+  privately in your terminal. Without it,
   media you picked stay `selected: true, enabled: false` with a remediation
   note; add the key and run `/gumi-setup` again. Delivery additionally requires
   your explicit `RELIC_ENABLE_GOOGLE_MEDIA=1` in that environment; a key alone
@@ -164,14 +165,22 @@ These keep their defaults. They can be added once something reads them.
   ComfyUI/ACE-Step rendering is local, but Google prompt-generation fallbacks
   mean the same delivery gate covers those branches too. Passive-extraction
   consent (`c_pas`) never enables media or sets this flag.
-- **Telegram bot token.** It is already in the profile `.env`; onboarding uses
-  the connected bot and never asks for it.
+- **Telegram credentials.** Configure them privately with Hermes:
+  `hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN`,
+  `hermes --profile relic-gumi config set TELEGRAM_ALLOWED_USERS`, and
+  `hermes --profile relic-gumi config set TELEGRAM_HOME_CHANNEL`.
+  No values belong in chat. Runtime onboarding reads only the active Hermes
+  secret scope and never reads or writes `.env`; CLI onboarding also directs
+  you to Hermes instead of collecting secrets. Missing credentials keep the
+  affected delivery/media feature off, not the entire plugin.
 
 ## Derived, not asked
 
 - `delivery_capability_enabled` is `true` (Telegram is configured by the installer).
-- `TELEGRAM_HOME_CHANNEL` is the chat the onboarding runs in, stored in the
-  profile `.env` with a fingerprint in `credential_references`.
+- The chat used for Telegram onboarding becomes a fingerprint in
+  `credential_references`, never a credential-file write. Configure the matching
+  `TELEGRAM_HOME_CHANNEL` through Hermes before arming scheduled delivery; an
+  absent or changed target keeps delivery blocked until setup is rerun.
 - The first message is derived from `armed`, not asked. `armed` = Yes: Gumi
   writes first (`runtime_policy.first_message` = `gumi_sends_first`,
   `checkin_state.first_message.status` = `requested`). `armed` = No: Gumi waits

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from tests.secret_fakes import seed_credentials
 pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
@@ -8,7 +9,6 @@ from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 import yaml
 
 import relic.gumi_install as cli

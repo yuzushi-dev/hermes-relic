@@ -55,7 +55,7 @@ _TELEGRAM_SETTINGS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS")
 def _missing_telegram_settings(profile_home: Path) -> list[str]:
     """Names (never values) of required Telegram settings absent from the active Hermes secret scope."""
     try:
-        values = ProfileRegistry(hermes_profiles_home=profile_home.parent)._read_private_env()
+        values = ProfileRegistry(hermes_profiles_home=profile_home.parent).load_user_private_env()
     except (OSError, ValueError):
         return list(_TELEGRAM_SETTINGS)
     return [name for name in _TELEGRAM_SETTINGS if not (values.get(name) or "").strip()]

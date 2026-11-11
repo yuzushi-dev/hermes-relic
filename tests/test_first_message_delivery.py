@@ -9,9 +9,9 @@ message marked ``sent`` so it is never repeated.
 from __future__ import annotations
 
 import pytest
+
 from tests.secret_fakes import seed_credentials
 
-pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 import importlib.util
@@ -24,7 +24,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import pytest
 
 from relic.profile.registry import ProfileRegistry
 from relic.user_runtime import (

@@ -1,7 +1,7 @@
 """Plumbing shared by the onboarding channels (Telegram, Desktop).
 
 No question text lives here (see ``presentation.py`` and the catalog); this is
-the runtime side: private-env lookup, completion check, activation.
+the runtime side: scoped credential lookup, completion check, activation.
 """
 
 from __future__ import annotations

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from tests.secret_fakes import seed_credentials
 
 pytestmark = pytest.mark.usefixtures("scoped_secrets")
@@ -13,7 +14,6 @@ import stat
 from io import StringIO
 from pathlib import Path
 
-import pytest
 
 from relic.hermes_plugin.context_injection import _build_user_runtime_guidance
 from relic.onboarding.assemble import assemble, finalize

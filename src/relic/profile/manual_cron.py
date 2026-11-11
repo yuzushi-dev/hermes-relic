@@ -50,7 +50,7 @@ def _copy_state(source: Path, target: Path) -> None:
         return shutil.copy2(src, dst)
 
     shutil.copytree(source, target, copy_function=copy_file,
-                    ignore=shutil.ignore_patterns("*-wal", "*-shm", "*.lock", "*.sock", "__pycache__"))
+                    ignore=shutil.ignore_patterns(".env", "auth.json", "*-wal", "*-shm", "*.lock", "*.sock", "__pycache__"))
 
 
 @contextmanager
@@ -64,7 +64,7 @@ def isolated_state(relic_home: Path, profile_home: Path):
         _copy_state(profile_home, profile)
         replacements = ((str(profile_home), str(profile)), (str(relic_home), str(relic)))
         for path in root.rglob("*"):
-            if path.is_file() and (path.suffix in {".json", ".yaml", ".yml", ".md", ".sh"} or path.name == ".env"):
+            if path.is_file() and path.suffix in {".json", ".yaml", ".yml", ".md", ".sh"}:
                 content = path.read_text(encoding="utf-8")
                 remapped = content
                 for original, copied in replacements:

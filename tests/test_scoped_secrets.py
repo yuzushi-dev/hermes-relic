@@ -162,6 +162,31 @@ def test_detached_worker_restores_scope_in_a_real_child(tmp_path):
     assert result.stdout.strip() == "scoped child passed"
 
 
+def test_operator_dryrun_does_not_copy_credential_files(tmp_path):
+    from relic.profile.manual_cron import isolated_state
+
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    (profile / ".env").write_text("GEMINI_API_KEY=test-token\n")
+    (profile / "auth.json").write_text('{"token": "test-token"}')
+    (profile / "config.yaml").write_text("model: test-model\n")
+    with isolated_state(tmp_path / "relic", profile) as (_, copied, _):
+        assert not (copied / ".env").exists()
+        assert not (copied / "auth.json").exists()
+        assert (copied / "config.yaml").read_text() == "model: test-model\n"
+
+
+def test_legacy_cli_rejects_credential_files_before_reading(tmp_path, monkeypatch):
+    from pathlib import Path
+    from relic.profile.migration import read_private_env, MigrationError
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("credential file was read")
+    monkeypatch.setattr(Path, "read_text", forbidden)
+    with pytest.raises(MigrationError, match="hermes --profile relic-gumi config set"):
+        read_private_env(tmp_path / ".env")
+
+
 def test_scope_error_fails_closed(monkeypatch):
     from relic.secrets import secret_value
 

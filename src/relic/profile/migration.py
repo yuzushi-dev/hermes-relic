@@ -592,17 +592,11 @@ def migrate_legacy_subject(
 
 
 def read_private_env(path: Path) -> dict[str, str]:
-    """Read only migration-approved credential names without printing values."""
-    values: dict[str, str] = {}
-    for raw_line in Path(path).read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        name, value = line.split("=", 1)
-        name = name.strip()
-        if name in _ALLOWED_PRIVATE_ENV:
-            values[name] = value.strip().strip('"').strip("'")
-    return _validate_private_env(values)
+    """Reject the legacy credential-file route without opening the supplied path."""
+    raise MigrationError(
+        "Credential-file migration is not supported. Configure credentials privately "
+        "with hermes --profile relic-gumi config set <NAME>, then rerun /gumi-setup."
+    )
 
 
 def _validate_private_env(values: Mapping[str, str]) -> dict[str, str]:

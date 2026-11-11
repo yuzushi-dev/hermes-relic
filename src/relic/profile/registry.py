@@ -329,19 +329,11 @@ class ProfileRegistry:
             raise ValueError(f"{name} contains forbidden fields: {', '.join(sorted(forbidden))}")
         return artifact
 
-    def _read_private_env(self) -> dict[str, str]:
-        """Compatibility alias: a scoped snapshot, never a credential-file read."""
+    def load_user_private_env(self) -> dict[str, str]:
+        """A short-lived active Hermes scope snapshot; never a credential-file read."""
         from relic.secrets import scoped_credentials
 
         return scoped_credentials()
-
-    def load_user_private_env(self) -> dict[str, str]:
-        """Load the canonical User Hermes environment for runtime activation."""
-        return self._read_private_env()
-
-    @staticmethod
-    def _render_private_env(values: Mapping[str, str]) -> str:
-        return "\n".join(f"{name}={value}" for name, value in sorted(values.items())) + "\n"
 
     @staticmethod
     def _stage_private_file(path: Path, text: str) -> Path:
@@ -543,7 +535,7 @@ class ProfileRegistry:
             name: self._validate_artifact(name, artifact, user)
             for name, artifact in artifacts.items()
         }
-        existing_env = self._read_private_env()
+        existing_env = self.load_user_private_env()
         for name, value in private_env.items():
             if not isinstance(name, str) or not isinstance(value, str) or "\n" in value:
                 raise ValueError("canonical Hermes environment contains an invalid value")

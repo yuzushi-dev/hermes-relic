@@ -68,7 +68,6 @@ class OnboardingController:
         self.activate = activate or _default_activate(self.relic_home, self.hermes_base_home)
         self.markup = markup or _markup
         self._lock = asyncio.Lock()
-        self._env_warned = False
 
     # -- configuration ------------------------------------------------------
 
@@ -81,14 +80,7 @@ class OnboardingController:
         return ProgressStore(self.relic_home / "user")
 
     def _value(self, name: str) -> str:
-        def warn() -> None:
-            if not self._env_warned:
-                self._env_warned = True
-                logger.warning(
-                    "relic onboarding disabled: profile .env is not private (0600) or unreadable"
-                )
-
-        return _env_value(self.env, self._registry(), name, warn=warn)
+        return _env_value(self.env, self._registry(), name)
 
     def _allowed_users(self) -> set[str]:
         return {u.strip() for u in self._value("TELEGRAM_ALLOWED_USERS").split(",") if u.strip()}

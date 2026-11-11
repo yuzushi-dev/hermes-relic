@@ -7,6 +7,7 @@ card and answers from a script, like the Telegram suite does.
 from __future__ import annotations
 
 import pytest
+
 from tests.secret_fakes import seed_credentials
 
 pytestmark = pytest.mark.usefixtures("scoped_secrets")
@@ -17,7 +18,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
 
 from relic.hermes_plugin import desktop_onboarding as desk
 from relic.onboarding.engine import SKIP, Engine

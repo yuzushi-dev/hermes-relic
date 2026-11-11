@@ -1,6 +1,11 @@
 """Telegram onboarding controller, hook and button handler (no real Telegram)."""
 
 from __future__ import annotations
+
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 import asyncio
@@ -95,6 +100,7 @@ class Env:
         self.bot = FakeBot()
         env = {"TELEGRAM_ALLOWED_USERS": USER, "TELEGRAM_BOT_TOKEN": TOKEN}
         env.update(overrides)
+        seed_credentials(env)
         self.controller = tg.OnboardingController(
             relic_home=self.relic_home,
             profiles_home=self.profiles_home,
@@ -204,7 +210,7 @@ def test_other_platform_and_missing_bot_or_token_pass_through(tmp_path):
     assert no_token.bot.sent == []
 
 
-def test_allowlist_and_token_can_come_from_profile_env(tmp_path):
+def test_profile_env_is_never_a_credential_source(tmp_path):
     env = Env(tmp_path, TELEGRAM_ALLOWED_USERS="", TELEGRAM_BOT_TOKEN="")
     env_file = env.profiles_home / HERMES_USER_PROFILE_NAME / ".env"
     env_file.parent.mkdir(parents=True)
@@ -212,7 +218,8 @@ def test_allowlist_and_token_can_come_from_profile_env(tmp_path):
         f"TELEGRAM_ALLOWED_USERS=1,{USER}\nTELEGRAM_BOT_TOKEN={TOKEN}\n", encoding="utf-8"
     )
     os.chmod(env_file, 0o600)
-    assert asyncio.run(env.start())["action"] == "skip"
+    assert asyncio.run(env.start()) is None
+    assert env.bot.sent == []
 
 
 # --- first contact and questions -------------------------------------------
@@ -587,7 +594,8 @@ def test_token_is_only_in_profile_env(tmp_path):
         for path in root.rglob("*"):
             if path.is_file() and TOKEN in path.read_text(encoding="utf-8", errors="ignore"):
                 holders.append(path)
-    assert holders == [env_file]
+    assert holders == []
+    assert not env_file.exists()
     for call in env.bot.sent + env.bot.edits:
         assert TOKEN not in json.dumps(call, default=str)
 

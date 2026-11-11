@@ -1,6 +1,11 @@
 """``/gumi-setup`` command, relic_home plumbing and private-env warning."""
 
 from __future__ import annotations
+
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 import asyncio
@@ -64,7 +69,7 @@ def test_default_activate_uses_controller_relic_home(tmp_path, monkeypatch):
     }
 
 
-def test_non_private_profile_env_warns_once_and_passes_through(tmp_path, caplog):
+def test_profile_env_is_ignored_and_missing_credentials_pass_through(tmp_path, caplog):
     env = Env(tmp_path, TELEGRAM_ALLOWED_USERS="", TELEGRAM_BOT_TOKEN="")
     env_file = env.profiles_home / HERMES_USER_PROFILE_NAME / ".env"
     env_file.parent.mkdir(parents=True)
@@ -79,7 +84,5 @@ def test_non_private_profile_env_warns_once_and_passes_through(tmp_path, caplog)
     assert first is None and second is None
     assert env.bot.sent == []
     messages = [r.getMessage() for r in caplog.records if "onboarding disabled" in r.getMessage()]
-    assert messages == [
-        "relic onboarding disabled: profile .env is not private (0600) or unreadable"
-    ]
+    assert messages == []  # No allowlisted user, and no credential-file inspection.
     assert TOKEN not in caplog.text

@@ -35,6 +35,8 @@ def _write_user_state(
         "TELEGRAM_BOT_TOKEN": _VALID_TELEGRAM_TOKEN,
         "TELEGRAM_HOME_CHANNEL": "123456789",
     }
+    from tests.secret_fakes import seed_credentials
+    seed_credentials(private_env)
     registry.materialize_user_artifacts(
         user,
         baseline={},

@@ -1,6 +1,11 @@
 """First-message scheduling against stock Hermes 0.23.0: no ``cron ... --json``."""
 
 from __future__ import annotations
+
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 import json

@@ -316,11 +316,11 @@ def test_hermes_profile_home_heuristic_resolves_profile_and_base(tmp_path: Path)
     # HERMES_HOME pointing at the Hermes base -> <base>/profiles/<profile>.
     assert user_runtime._hermes_profile_home({"HERMES_HOME": str(base)}) == profile
     assert user_runtime._hermes_profile_home({}, hermes_home=base) == profile
-    # A directory with a .env is treated as a profile whatever its name (inherited rule).
+    # Credential files are no longer consulted for profile identification.
     other = tmp_path / "other"
     other.mkdir()
     (other / ".env").write_text("", encoding="utf-8")
-    assert user_runtime._hermes_profile_home({"HERMES_HOME": str(other)}) == other
+    assert user_runtime._hermes_profile_home({"HERMES_HOME": str(other)}) == other / "profiles" / HERMES_USER_PROFILE_NAME
     # The old name is no longer recognised as the profile.
     old = base / "profiles" / OLD_PROFILE_NAME
     old.mkdir()

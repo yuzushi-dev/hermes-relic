@@ -1,4 +1,8 @@
 from __future__ import annotations
+
+import pytest
+from tests.secret_fakes import seed_credentials
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 from pathlib import Path
@@ -85,6 +89,7 @@ def _install_without_onboarding(monkeypatch, profile_home):
 def test_cli_install_hands_onboarding_off_to_telegram(monkeypatch, tmp_path, capsys):
     profile_home = tmp_path / "profiles" / HERMES_USER_PROFILE_NAME
     _write_env(profile_home, "TELEGRAM_BOT_TOKEN=secret-token\nTELEGRAM_ALLOWED_USERS=123456789\n")
+    seed_credentials({"TELEGRAM_BOT_TOKEN": "test-token", "TELEGRAM_ALLOWED_USERS": "123456789"})
     events = _install_without_onboarding(monkeypatch, profile_home)
 
     assert cli.main(["install"]) == 0
@@ -97,12 +102,13 @@ def test_cli_install_hands_onboarding_off_to_telegram(monkeypatch, tmp_path, cap
 
 def test_cli_install_lists_only_missing_telegram_names(monkeypatch, tmp_path, capsys):
     profile_home = tmp_path / "profiles" / HERMES_USER_PROFILE_NAME
+    seed_credentials({"TELEGRAM_BOT_TOKEN": "test-token"})
     _write_env(profile_home, "TELEGRAM_BOT_TOKEN=secret-token\n")
     _install_without_onboarding(monkeypatch, profile_home)
 
     assert cli.main(["install"]) == 0
     out = capsys.readouterr().out
-    assert "Missing in the profile .env: TELEGRAM_ALLOWED_USERS\n" in out
+    assert "Missing in the active Hermes secret scope: TELEGRAM_ALLOWED_USERS\n" in out
     assert "TELEGRAM_BOT_TOKEN" not in out
     assert "secret-token" not in out
     assert "Next: open Telegram and send /start to your bot" in out
@@ -113,7 +119,7 @@ def test_cli_install_missing_env_counts_as_both_missing(monkeypatch, tmp_path, c
     _install_without_onboarding(monkeypatch, profile_home)
 
     assert cli.main(["install"]) == 0
-    assert "Missing in the profile .env: TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS\n" in (
+    assert "Missing in the active Hermes secret scope: TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS\n" in (
         capsys.readouterr().out
     )
 
@@ -129,7 +135,7 @@ def test_cli_install_unreadable_env_counts_as_both_missing(monkeypatch, tmp_path
 
     assert cli.main(["install"]) == 0
     out = capsys.readouterr().out
-    assert "Missing in the profile .env: TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS\n" in out
+    assert "Missing in the active Hermes secret scope: TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS\n" in out
     assert "secret-token" not in out
 
 

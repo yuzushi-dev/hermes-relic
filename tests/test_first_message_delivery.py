@@ -7,6 +7,11 @@ message marked ``sent`` so it is never repeated.
 """
 
 from __future__ import annotations
+
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 import importlib.util
@@ -36,7 +41,7 @@ from tests.test_user_runtime_activation import (
 )
 from tests.test_user_runtime_stock_job_shape import SCRIPT_NAME, StockShapeRunner
 
-pytestmark = pytest.mark.usefixtures("inline_cron_dispatch")
+pytestmark = pytest.mark.usefixtures("inline_cron_dispatch", "scoped_secrets")
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SAFE_REPLACEMENT = "I'm here with you. What would feel most helpful right now?"
@@ -86,7 +91,7 @@ def _first_message_job(job_id: str = JOB_ID) -> dict:
 
 
 @pytest.fixture()
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Env:
+def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scoped_secrets) -> _Env:
     e = _Env(tmp_path, monkeypatch)
     e.save(armed=True, first_message="gumi_sends_first")
     e.write_jobs([_first_message_job()])

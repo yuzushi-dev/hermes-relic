@@ -18,7 +18,7 @@ from relic.profile.registry import ProfileRegistry, UserProfile
 _TELEGRAM_TOKEN = re.compile(r"^\d{6,15}:[A-Za-z0-9_-]{20,}$")
 _TELEGRAM_TARGET = re.compile(r"^-?\d+$")
 _GEMINI_API_KEY = re.compile(r"^AIza[A-Za-z0-9_-]{20,}$")
-_REMEDIATION = "Add a Gemini API key with relic-gumi configure."
+_REMEDIATION = "Add a Gemini API key with hermes --profile relic-gumi config set GEMINI_API_KEY."
 _QUIET_HOURS = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -293,9 +293,10 @@ class UserOnboarding:
         if any(selected.values()):
             key = self._gemini_key(saved_credentials)
             if not key:
-                key = self._validated_gemini_key(
-                    self._ask("Gemini API key (leave blank to keep selected media off)")
-                )
+                self._print("Media remains off. Configure credentials privately with Hermes, then rerun setup.")
+                from relic.secrets import credential_setup_commands
+
+                self._print(credential_setup_commands())
             if key:
                 credentials["gemini_api_key"] = key
         media = {
@@ -317,20 +318,12 @@ class UserOnboarding:
             default=True,
         ):
             return {"delivery_capability_enabled": False, "delivery_execution_armed": False}
-        if not token:
-            token = self._ask("Telegram bot token (leave blank to keep delivery off)")
-            if not self._valid_telegram_token(token):
-                self._print(
-                    "Your Telegram delivery remains off. Add a valid token and numeric target with relic-gumi configure."
-                )
-                return {"delivery_capability_enabled": False, "delivery_execution_armed": False}
-        if not target:
-            target = self._ask("Telegram target (numbers only; leave blank to keep delivery off)")
-            if not self._valid_telegram_target(target):
-                self._print(
-                    "Your Telegram delivery remains off. Add a valid token and numeric target with relic-gumi configure."
-                )
-                return {"delivery_capability_enabled": False, "delivery_execution_armed": False}
+        if not token or not target:
+            from relic.secrets import credential_setup_commands
+
+            self._print("Your Telegram delivery remains off. Configure credentials privately with Hermes, then rerun setup.")
+            self._print(credential_setup_commands())
+            return {"delivery_capability_enabled": False, "delivery_execution_armed": False}
         credentials["telegram_bot_token"] = token
         credentials["telegram_target"] = target
         armed = self._confirm(
@@ -375,7 +368,9 @@ class UserOnboarding:
     def _saved_credentials(self) -> dict[str, str]:
         if self.registry.load_user_configuration() is None:
             return {}
-        values = self._read_env(self.registry.hermes_user_env_path)
+        from relic.secrets import scoped_credentials
+
+        values = scoped_credentials()
         credentials: dict[str, str] = {}
         gemini = self._validated_gemini_key(values.get("GEMINI_API_KEY", ""))
         if gemini:
@@ -421,8 +416,7 @@ class UserOnboarding:
     def _telegram_values(self, saved_credentials: Mapping[str, str]) -> tuple[str, str, bool]:
         for values, preconfirmed in (
             (saved_credentials, True),
-            (self.environ, False),
-            (self._read_env(self.registry.hermes_user_home / ".env"), False),
+            (self.registry.load_user_private_env(), False),
         ):
             token, target = self._telegram_pair(values)
             if token:
@@ -467,35 +461,10 @@ class UserOnboarding:
         self, saved_credentials: Mapping[str, str]
     ) -> tuple[Mapping[str, str], ...]:
         return (
-            self.environ,
+            self.registry.load_user_private_env(),
             saved_credentials,
-            self._read_env(self.registry.hermes_user_home / ".env"),
         )
 
-    @staticmethod
-    def _read_env(path: Path) -> dict[str, str]:
-        if path.is_symlink() or not path.is_file():
-            return {}
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return {}
-        values: dict[str, str] = {}
-        for raw_line in lines:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export") and len(line) > 6 and line[6].isspace():
-                line = line[6:].lstrip()
-            key, separator, value = line.partition("=")
-            key = key.strip()
-            if not separator or not key:
-                continue
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-                value = value[1:-1]
-            values[key] = value
-        return values
 
     @staticmethod
     def _valid_telegram_token(value: str) -> bool:

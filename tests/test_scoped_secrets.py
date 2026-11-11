@@ -53,6 +53,46 @@ def test_runtime_consumers_resolve_active_scope_each_call(monkeypatch, tmp_path)
     assert set(calls) == {"GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_HOME_CHANNEL", "TELEGRAM_ALLOWED_USERS", "OLLAMA_API_KEYS"}
 
 
+def test_registry_and_onboarding_never_open_dotenv(monkeypatch, tmp_path, scoped_secrets):
+    from io import StringIO
+    from pathlib import Path
+    from relic.profile.registry import ProfileRegistry
+    from relic.profile.user_onboarding import UserOnboarding
+    from relic.onboarding.channel import env_value
+
+    scoped_secrets["GEMINI_API_KEY"] = "test-token"
+    registry = ProfileRegistry(relic_home=tmp_path / "relic", hermes_profiles_home=tmp_path / "profiles")
+    user = registry.initialize_user()
+    original_read = Path.read_text
+    original_open = builtins.open
+    original_path_open = Path.open
+    def safe_read(path, *args, **kwargs):
+        assert path.name != ".env", "plugin read a credential file"
+        return original_read(path, *args, **kwargs)
+    def safe_open(path, *args, **kwargs):
+        assert Path(path).name != ".env", "plugin opened a credential file"
+        return original_open(path, *args, **kwargs)
+    def safe_path_open(path, *args, **kwargs):
+        assert path.name != ".env", "plugin opened a credential file"
+        return original_path_open(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", safe_read)
+    monkeypatch.setattr(Path, "open", safe_path_open)
+    monkeypatch.setattr(builtins, "open", safe_open)
+    assert registry.load_user_private_env() == {"GEMINI_API_KEY": "test-token"}
+    assert env_value({"GEMINI_API_KEY": "test-wrong-profile"}, registry, "GEMINI_API_KEY") == "test-token"
+    from relic.onboarding.assemble import assemble, finalize
+    finalize(registry, user, assemble({}, telegram_token="", chat_id=""))
+    assert not registry.hermes_user_env_path.exists()
+    output = StringIO()
+    onboarding = UserOnboarding(registry, io_in=StringIO("y\nn\nn\n"), io_out=output, environ={"GEMINI_API_KEY": "test-wrong-profile"}, gemini_validator=lambda key: key == "test-token")
+    media, credentials = onboarding._collect_media({})
+    assert media["images"]["enabled"] is True
+    scoped_secrets.clear()
+    assert onboarding._collect_telegram({}, {}) == {"delivery_capability_enabled": False, "delivery_execution_armed": False}
+    for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS", "TELEGRAM_HOME_CHANNEL"):
+        assert f"hermes --profile relic-gumi config set {name}" in output.getvalue()
+
+
 def test_scope_error_fails_closed(monkeypatch):
     from relic.secrets import secret_value
 

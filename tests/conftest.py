@@ -8,11 +8,15 @@ import types
 @pytest.fixture
 def scoped_secrets(monkeypatch):
     """A synthetic active Hermes scope, isolated from ambient credentials."""
+    from agent.secret_scope import (set_secret_scope, reset_secret_scope, set_multiplex_context, reset_multiplex_context)
     values = {}
-    module = types.ModuleType("agent.secret_scope")
-    module.get_secret = lambda name, default=None: values.get(name, default)
-    monkeypatch.setitem(sys.modules, "agent.secret_scope", module)
-    return values
+    scope = set_secret_scope(values)
+    multiplex = set_multiplex_context(True)
+    try:
+        yield values
+    finally:
+        reset_secret_scope(scope)
+        reset_multiplex_context(multiplex)
 
 
 @pytest.fixture

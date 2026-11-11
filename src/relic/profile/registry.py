@@ -104,23 +104,6 @@ def _read_json(path: Path) -> dict[str, Any]:
         return json.load(f)
 
 
-def _parse_env_text(text: str) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export") and len(line) > 6 and line[6].isspace():
-            line = line[6:].lstrip()
-        key, separator, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if not separator or not key:
-            continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        values[key] = value
-    return values
 
 
 class ProfileRegistry:
@@ -347,14 +330,10 @@ class ProfileRegistry:
         return artifact
 
     def _read_private_env(self) -> dict[str, str]:
-        path = self.hermes_user_env_path
-        if not path.exists():
-            return {}
-        self._require_private_file(path, "canonical Hermes environment")
-        try:
-            return _parse_env_text(path.read_text(encoding="utf-8"))
-        except OSError as exc:
-            raise ValueError("canonical Hermes environment is unreadable") from exc
+        """Compatibility alias: a scoped snapshot, never a credential-file read."""
+        from relic.secrets import scoped_credentials
+
+        return scoped_credentials()
 
     def load_user_private_env(self) -> dict[str, str]:
         """Load the canonical User Hermes environment for runtime activation."""
@@ -572,7 +551,7 @@ class ProfileRegistry:
         serialized = "\n".join(self._artifact_text(value) for value in validated.values())
         raw_private_values = {value for value in existing_env.values() if len(value) >= 8}
         if any(value in serialized for value in raw_private_values):
-            raise ValueError("raw private values must remain in the Hermes environment")
+            raise ValueError("raw private values must not appear in Relic artifacts")
         provenance_record = {
             "schema_version": USER_ARTIFACT_SCHEMA_VERSION,
             "event": "configured",
@@ -597,7 +576,6 @@ class ProfileRegistry:
             + json.dumps(provenance_record, sort_keys=True, ensure_ascii=False)
             + "\n"
         )
-        replacements[self.hermes_user_env_path] = self._render_private_env(existing_env)
         self._replace_private_files(replacements, (self.legacy_user_onboarding_path,))
         return self.user_profile_path
 

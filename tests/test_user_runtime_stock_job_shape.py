@@ -5,6 +5,11 @@ in ``<profile>/scripts/``, and stores ``schedule``/``repeat`` as dicts.
 """
 
 from __future__ import annotations
+
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 import json

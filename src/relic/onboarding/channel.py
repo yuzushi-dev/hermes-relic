@@ -40,18 +40,10 @@ def env_value(
     *,
     warn: Callable[[], None] | None = None,
 ) -> str:
-    """Configuration value: the process env first, then the private profile .env."""
-    value = (env.get(name) or "").strip()
-    if value:
-        return value
-    try:
-        return (registry._read_private_env().get(name) or "").strip()
-    except ValueError:
-        if warn is not None:
-            warn()
-        return ""
-    except OSError:
-        return ""
+    """Resolve through Hermes; legacy arguments never supply credentials."""
+    from relic.secrets import secret_value
+
+    return secret_value(name)
 
 
 def is_complete(registry: ProfileRegistry, progress: Mapping[str, Any]) -> bool:

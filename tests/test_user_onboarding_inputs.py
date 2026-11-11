@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
+
 import os
 from io import StringIO
 from pathlib import Path
@@ -8,6 +13,7 @@ import pytest
 
 from relic.profile import user_onboarding
 from relic.profile.registry import MultipleLegacyProfilesError, ProfileRegistry
+from tests.secret_fakes import onboard_with_scoped_credentials
 from relic.profile.user_onboarding import UserOnboarding, load_onboarding_state
 
 
@@ -38,7 +44,7 @@ def _skip_battery(monkeypatch) -> None:
 def test_eof_cancels_without_onboarding_persistence_after_user_initialization(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
 
-    result = UserOnboarding(registry, io_in=StringIO(), io_out=StringIO(), environ={}).run()
+    result = onboard_with_scoped_credentials(registry, io_in=StringIO(), io_out=StringIO(), environ={}).run()
 
     assert result is None
     assert registry.load_user() is not None
@@ -52,7 +58,7 @@ def test_quoted_environment_gemini_key_is_normalized_before_injected_validation(
     registry = _registry(tmp_path)
     seen: list[str] = []
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_input("d", "c", "y", "n", "n", "", "", "w"),
         io_out=StringIO(),
@@ -65,14 +71,14 @@ def test_quoted_environment_gemini_key_is_normalized_before_injected_validation(
     assert seen == [_VALID_GEMINI_KEY]
     assert state is not None
     assert state["media"]["images"]["enabled"] is True
-    assert _VALID_GEMINI_KEY in registry.hermes_user_env_path.read_text(encoding="utf-8")
+    assert not registry.hermes_user_env_path.exists()
 
 
 def test_default_gemini_validation_rejects_placeholder_key(tmp_path: Path, monkeypatch) -> None:
     _skip_battery(monkeypatch)
     registry = _registry(tmp_path)
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_input("d", "c", "y", "n", "n", "", "", "w"),
         io_out=StringIO(),
@@ -85,9 +91,9 @@ def test_default_gemini_validation_rejects_placeholder_key(tmp_path: Path, monke
     assert state["media"]["images"] == {
         "selected": True,
         "enabled": False,
-        "remediation": "Add a Gemini API key with relic-gumi configure.",
+        "remediation": "Add a Gemini API key with hermes --profile relic-gumi config set GEMINI_API_KEY.",
     }
-    assert "GEMINI_API_KEY=" not in registry.hermes_user_env_path.read_text(encoding="utf-8")
+    assert not registry.hermes_user_env_path.exists()
 
 
 def test_injected_gemini_validator_can_reject_a_structurally_valid_key(
@@ -97,7 +103,7 @@ def test_injected_gemini_validator_can_reject_a_structurally_valid_key(
     registry = _registry(tmp_path)
     seen: list[str] = []
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_input("d", "c", "y", "n", "n", "", "", "w"),
         io_out=StringIO(),
@@ -110,7 +116,7 @@ def test_injected_gemini_validator_can_reject_a_structurally_valid_key(
     assert seen == [_VALID_GEMINI_KEY]
     assert state is not None
     assert state["media"]["images"]["enabled"] is False
-    assert "GEMINI_API_KEY=" not in registry.hermes_user_env_path.read_text(encoding="utf-8")
+    assert not registry.hermes_user_env_path.exists()
 
 
 class _PromptForbidden:
@@ -126,7 +132,7 @@ def test_multiple_legacy_profiles_are_rejected_before_first_prompt(tmp_path: Pat
         (profile / "subject_profile.json").write_text("{}", encoding="utf-8")
 
     with pytest.raises(MultipleLegacyProfilesError):
-        UserOnboarding(registry, io_in=_PromptForbidden(), io_out=StringIO(), environ={}).run()
+        onboard_with_scoped_credentials(registry, io_in=_PromptForbidden(), io_out=StringIO(), environ={}).run()
 
 
 @pytest.mark.parametrize("source", ["environ", "env_file"])
@@ -154,7 +160,7 @@ def test_discovered_ambient_telegram_requires_explicit_confirmation(
         )
     output = StringIO()
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_input("d", "c", "n", "n", "n", "n", "w"),
         io_out=output,
@@ -167,7 +173,10 @@ def test_discovered_ambient_telegram_requires_explicit_confirmation(
     assert state["delivery_capability_enabled"] is False
     assert _VALID_TELEGRAM_TOKEN not in output.getvalue()
     assert _VALID_TELEGRAM_TARGET not in output.getvalue()
-    assert _VALID_TELEGRAM_TARGET[-4:] in output.getvalue()
+    if source == "environ":
+        assert _VALID_TELEGRAM_TARGET[-4:] in output.getvalue()
+    else:
+        assert "hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN" in output.getvalue()
 
 
 def test_confirmed_ambient_telegram_enables_capability_without_printing_secrets(
@@ -177,7 +186,7 @@ def test_confirmed_ambient_telegram_enables_capability_without_printing_secrets(
     registry = _registry(tmp_path)
     output = StringIO()
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_input("d", "c", "n", "n", "n", "y", "n", "w"),
         io_out=output,
@@ -192,9 +201,9 @@ def test_confirmed_ambient_telegram_enables_capability_without_printing_secrets(
     assert state is not None
     assert state["delivery_capability_enabled"] is True
     assert state["delivery_execution_armed"] is False
-    env = registry.hermes_user_env_path.read_text(encoding="utf-8")
-    assert _VALID_TELEGRAM_TOKEN in env
-    assert _VALID_TELEGRAM_TARGET in env
+    assert not registry.hermes_user_env_path.exists()
+    assert registry.load_user_private_env()["TELEGRAM_BOT_TOKEN"] == _VALID_TELEGRAM_TOKEN
+    assert registry.load_user_private_env()["TELEGRAM_HOME_CHANNEL"] == _VALID_TELEGRAM_TARGET
     assert _VALID_TELEGRAM_TOKEN not in output.getvalue()
     assert _VALID_TELEGRAM_TARGET not in output.getvalue()
 
@@ -203,9 +212,9 @@ def test_load_onboarding_state_returns_valid_canonical_state(tmp_path: Path, mon
     _skip_battery(monkeypatch)
     registry = _registry(tmp_path)
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
-        io_in=_input("d", "c", "n", "n", "n", "", "w"),
+        io_in=_input("d", "c", "n", "n", "n", "w"),
         io_out=StringIO(),
         environ={},
     ).run()
@@ -239,7 +248,7 @@ def test_load_onboarding_state_repairs_private_file_permissions(
 ) -> None:
     _skip_battery(monkeypatch)
     registry = _registry(tmp_path)
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_input("d", "c", "n", "n", "n", "", "", "w"),
         io_out=StringIO(),
@@ -254,7 +263,7 @@ def test_load_onboarding_state_repairs_private_file_permissions(
 def test_load_onboarding_state_rejects_symlink(tmp_path: Path, monkeypatch) -> None:
     _skip_battery(monkeypatch)
     registry = _registry(tmp_path)
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_input("d", "c", "n", "n", "n", "", "", "w"),
         io_out=StringIO(),

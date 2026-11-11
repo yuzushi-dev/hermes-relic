@@ -503,7 +503,7 @@ def _hermes_profile_home(
 ) -> Path:
     if hermes_home is not None:
         home = Path(hermes_home)
-        if home.name == PROFILE_NAME or (home / ".env").is_file():
+        if home.name == PROFILE_NAME:
             return home
         return home / "profiles" / PROFILE_NAME
     profiles_home = environ.get("HERMES_PROFILES_HOME", "").strip()
@@ -512,7 +512,7 @@ def _hermes_profile_home(
     home = environ.get("HERMES_HOME", "").strip()
     if home:
         candidate = Path(home)
-        if candidate.name == PROFILE_NAME or (candidate / ".env").is_file():
+        if candidate.name == PROFILE_NAME:
             return candidate
         return candidate / "profiles" / PROFILE_NAME
     return Path.home() / ".hermes" / "profiles" / PROFILE_NAME

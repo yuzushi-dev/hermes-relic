@@ -1,4 +1,9 @@
 from __future__ import annotations
+
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
 from relic.hermes_runtime import HERMES_USER_PROFILE_NAME
 
 import hashlib
@@ -204,6 +209,7 @@ def _save_state(
         hermes_profiles_home=hermes_profiles_home or home / "hermes" / "profiles",
     )
     user = registry.initialize_user()
+    seed_credentials(state["private_env"])
     registry.materialize_user_artifacts(
         user,
         baseline=state["baseline"],

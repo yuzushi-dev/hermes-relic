@@ -25,7 +25,7 @@ from relic.user_runtime import RuntimeActivation, RuntimeActivationError, activa
 
 
 def _mark_profile_installer_owned(profile_home: Path) -> None:
-    """Leave the lifecycle marker before onboarding writes the profile's .env.
+    """Leave the lifecycle marker before onboarding saves canonical artifacts.
 
     Without it a ``configure`` run before ``install`` would create a profile the
     next ``install`` could not tell from someone else's. The state stays at
@@ -53,7 +53,7 @@ _TELEGRAM_SETTINGS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS")
 
 
 def _missing_telegram_settings(profile_home: Path) -> list[str]:
-    """Names (never values) of required Telegram settings absent from the profile .env."""
+    """Names (never values) of required Telegram settings absent from the active Hermes secret scope."""
     try:
         values = ProfileRegistry(hermes_profiles_home=profile_home.parent)._read_private_env()
     except (OSError, ValueError):
@@ -155,7 +155,7 @@ def _install(args: argparse.Namespace) -> int:
     print("Next: open Telegram and send /start to your bot")
     missing = _missing_telegram_settings(result.profile_home)
     if missing:
-        print("Missing in the profile .env: " + ", ".join(missing))
+        print("Missing in the active Hermes secret scope: " + ", ".join(missing))
     return 0
 
 

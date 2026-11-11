@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
+
 import json
 import stat
 from io import StringIO
@@ -9,6 +14,7 @@ import pytest
 
 from relic.profile import user_onboarding
 from relic.profile.registry import LegacyProfileMigrationRequired, ProfileRegistry
+from tests.secret_fakes import onboard_with_scoped_credentials
 from relic.profile.user_onboarding import GUMI_CLASSIC, UserOnboarding
 
 
@@ -52,6 +58,7 @@ def _seed_canonical_artifacts(registry: ProfileRegistry, state: dict[str, object
         for name, value in credentials.items()
         if isinstance(name, str) and isinstance(value, str)
     }
+    seed_credentials(private_env)
     registry.materialize_user_artifacts(
         user,
         baseline={},
@@ -83,9 +90,9 @@ def test_default_prompt_order_and_artifacts_are_user_only(tmp_path: Path, monkey
     registry = _registry(tmp_path)
     output = StringIO()
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
-        io_in=_onboarding_input("d", "n", "n", "n", "", "w"),
+        io_in=_onboarding_input("d", "n", "n", "n", "w"),
         io_out=output,
         environ={},
     ).run()
@@ -99,7 +106,7 @@ def test_default_prompt_order_and_artifacts_are_user_only(tmp_path: Path, monkey
         "Enable images? [y/N]",
         "Enable audio? [y/N]",
         "Enable music? [y/N]",
-        "Telegram bot token (leave blank to keep delivery off)",
+        "hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN",
         "First message [G]umi sends first / [W]ait for me",
     ]
     assert [text.index(prompt) for prompt in prompts] == sorted(text.index(prompt) for prompt in prompts)
@@ -144,7 +151,7 @@ def test_gemini_is_prompted_only_for_selected_media_and_missing_key_disables_it(
     registry = _registry(tmp_path)
     output = StringIO()
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "y", "n", "n", "", "", "", "w"),
         io_out=output,
@@ -152,19 +159,19 @@ def test_gemini_is_prompted_only_for_selected_media_and_missing_key_disables_it(
     ).run()
 
     text = output.getvalue()
-    gemini_prompt = "Gemini API key (leave blank to keep selected media off)"
+    gemini_prompt = "Media remains off. Configure credentials privately with Hermes, then rerun setup."
     assert text.count(gemini_prompt) == 1
     prompts = [
         "Enable music? [y/N]",
         gemini_prompt,
-        "Telegram bot token (leave blank to keep delivery off)",
+        "hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN",
     ]
     assert [text.index(prompt) for prompt in prompts] == sorted(text.index(prompt) for prompt in prompts)
     gumi = _artifacts(registry)["gumi_profile"]
     assert gumi["media"]["images"] == {
         "selected": True,
         "enabled": False,
-        "remediation": "Add a Gemini API key with relic-gumi configure.",
+        "remediation": "Add a Gemini API key with hermes --profile relic-gumi config set GEMINI_API_KEY.",
     }
     assert gumi["media"]["audio"]["enabled"] is False
     assert gumi["media"]["music"]["enabled"] is False
@@ -174,7 +181,7 @@ def test_telegram_uses_valid_canonical_values_then_arms_recurring_delivery(tmp_p
     registry = _registry(tmp_path)
     output = StringIO()
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "n", "n", "n", "y", "y", "w"),
         io_out=output,
@@ -185,22 +192,21 @@ def test_telegram_uses_valid_canonical_values_then_arms_recurring_delivery(tmp_p
     ).run()
 
     text = output.getvalue()
-    assert "Telegram bot token (leave blank to keep delivery off)" not in text
+    "hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN",
     assert "Telegram target (numbers only; leave blank to keep delivery off)" not in text
     assert "Arm recurring Telegram messages? They can arrive without opening Gumi. [Y/n]" in text
     assert VALID_TELEGRAM_TOKEN not in text
     policy = _artifacts(registry)["runtime_policy"]
     assert policy["delivery_capability_enabled"] is True
     assert policy["delivery_execution_armed"] is True
-    env = registry.hermes_user_env_path.read_text(encoding="utf-8")
-    assert f"TELEGRAM_BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in env
-    assert "TELEGRAM_HOME_CHANNEL=123456789" in env
-    assert stat.S_IMODE(registry.hermes_user_env_path.stat().st_mode) == 0o600
+    assert not registry.hermes_user_env_path.exists()
+    assert registry.load_user_private_env()["TELEGRAM_BOT_TOKEN"] == VALID_TELEGRAM_TOKEN
+    assert registry.load_user_private_env()["TELEGRAM_HOME_CHANNEL"] == "123456789"
 
 def test_default_setup_arms_delivery_and_requests_first_message(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "n", "n", "n", "", "", ""),
         io_out=StringIO(),
@@ -223,15 +229,15 @@ def test_invalid_telegram_values_are_requested_then_leave_delivery_unarmed(tmp_p
     registry = _registry(tmp_path)
     output = StringIO()
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
-        io_in=_onboarding_input("d", "n", "n", "n", "", "w"),
+        io_in=_onboarding_input("d", "n", "n", "n", "w"),
         io_out=output,
         environ={"TELEGRAM_BOT_TOKEN": "not-a-token", "TELEGRAM_HOME_CHANNEL": "abc"},
     ).run()
 
     text = output.getvalue()
-    assert "Telegram bot token (leave blank to keep delivery off)" in text
+    assert "hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN" in text
     assert "Telegram target (numbers only; leave blank to keep delivery off)" not in text
     assert "Telegram delivery remains off." in text
     policy = _artifacts(registry)["runtime_policy"]
@@ -242,7 +248,7 @@ def test_invalid_telegram_values_are_requested_then_leave_delivery_unarmed(tmp_p
 def test_telegram_capability_is_not_armed_after_an_explicit_no(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "n", "n", "n", "y", "n", "w"),
         io_out=StringIO(),
@@ -273,7 +279,7 @@ def test_two_consecutive_interrupts_discard_custom_state_and_return_to_mode_choi
     registry.initialize_user()
     output = StringIO()
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_InterruptingInput("c\n", "c\n", KeyboardInterrupt(), KeyboardInterrupt(), "q\n"),
         io_out=output,
@@ -293,7 +299,7 @@ def test_custom_exposes_advanced_preferences_without_changing_classic_defaults(t
     output = StringIO()
     classic_preferences = GUMI_CLASSIC.preferences()
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input(
             "c", "y", "detailed", "frequent", "n", "n", "n", "n", "n", "", "", "w"
@@ -313,7 +319,7 @@ def test_existing_gemini_key_enables_selected_media_without_prompting(tmp_path: 
     registry = _registry(tmp_path)
     output = StringIO()
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "y", "n", "n", "", "", "w"),
         io_out=output,
@@ -321,9 +327,10 @@ def test_existing_gemini_key_enables_selected_media_without_prompting(tmp_path: 
     ).run()
 
     gumi = _artifacts(registry)["gumi_profile"]
-    assert "Gemini API key" not in output.getvalue()
+    assert "Gemini API key (leave blank" not in output.getvalue()
     assert gumi["media"]["images"] == {"selected": True, "enabled": True}
-    assert VALID_GEMINI_KEY in registry.hermes_user_env_path.read_text(encoding="utf-8")
+    assert not registry.hermes_user_env_path.exists()
+    assert registry.load_user_private_env()["GEMINI_API_KEY"] == VALID_GEMINI_KEY
 
 
 def test_telegram_only_uses_the_canonical_user_profile_env(tmp_path: Path) -> None:
@@ -336,7 +343,7 @@ def test_telegram_only_uses_the_canonical_user_profile_env(tmp_path: Path) -> No
     )
     output = StringIO()
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "n", "n", "n", "", "", "w"),
         io_out=output,
@@ -344,7 +351,7 @@ def test_telegram_only_uses_the_canonical_user_profile_env(tmp_path: Path) -> No
     ).run()
 
     policy = _artifacts(registry)["runtime_policy"]
-    assert "Telegram bot token (leave blank to keep delivery off)" in output.getvalue()
+    assert "hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN" in output.getvalue()
     assert policy["delivery_capability_enabled"] is False
 
 
@@ -368,7 +375,7 @@ def test_existing_credentials_and_preferences_survive_reconfiguration(tmp_path: 
     )
 
     output = StringIO()
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "n", "n", "n", "n", "w"),
         io_out=output,
@@ -376,11 +383,11 @@ def test_existing_credentials_and_preferences_survive_reconfiguration(tmp_path: 
     ).run()
 
     gumi = _artifacts(registry)["gumi_profile"]
-    env = registry.hermes_user_env_path.read_text(encoding="utf-8")
-    assert f"GEMINI_API_KEY={VALID_GEMINI_KEY}" in env
-    assert f"TELEGRAM_BOT_TOKEN={VALID_TELEGRAM_TOKEN}" in env
-    assert "TELEGRAM_HOME_CHANNEL=123456789" in env
-    assert "UNRELATED_CREDENTIAL=keep-me" in env
+    assert not registry.hermes_user_env_path.exists()
+    env = registry.load_user_private_env()
+    assert env["GEMINI_API_KEY"] == VALID_GEMINI_KEY
+    assert env["TELEGRAM_BOT_TOKEN"] == VALID_TELEGRAM_TOKEN
+    assert env["TELEGRAM_HOME_CHANNEL"] == "123456789"
     assert gumi["preferences"]["interaction"]["message_length"] == "detailed"
     assert gumi["preferences"]["interaction"]["emoji_use"] == "none"
     assert gumi["preferences"]["relational"]["tone"] == "direct"
@@ -391,41 +398,24 @@ def test_existing_credentials_and_preferences_survive_reconfiguration(tmp_path: 
     assert len(registry.onboarding_provenance_path.read_text(encoding="utf-8").splitlines()) == 2
 
 
-def test_telegram_does_not_mix_values_between_canonical_sources(tmp_path: Path) -> None:
+def test_telegram_does_not_mix_ambient_values_with_scoped_values(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     _seed_canonical_artifacts(registry, {"credentials": {"telegram_target": "123456789"}})
     output = StringIO()
-
-    UserOnboarding(
-        registry,
-        io_in=_onboarding_input("d", "n", "n", "n", "", "w"),
-        io_out=output,
-        environ={"TELEGRAM_BOT_TOKEN": VALID_TELEGRAM_TOKEN},
-    ).run()
-
-    text = output.getvalue()
-    assert "Telegram bot token (leave blank to keep delivery off)" in text
-    assert "Telegram target (numbers only; leave blank to keep delivery off)" not in text
-    assert "TELEGRAM_HOME_CHANNEL=123456789" in registry.hermes_user_env_path.read_text(
-        encoding="utf-8"
-    )
+    UserOnboarding(registry, io_in=_onboarding_input("d", "n", "n", "n", "w"), io_out=output,
+                   environ={"TELEGRAM_BOT_TOKEN": VALID_TELEGRAM_TOKEN}).run()
+    assert "hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN" in output.getvalue()
+    assert not registry.hermes_user_env_path.exists()
     assert _artifacts(registry)["runtime_policy"]["delivery_capability_enabled"] is False
 
 
-def test_read_env_accepts_exported_matching_quotes(tmp_path: Path) -> None:
-    path = tmp_path / ".env"
-    path.write_text(
-        f'export GEMINI_API_KEY="{VALID_GEMINI_KEY}"\n'
-        f"export TELEGRAM_BOT_TOKEN='{VALID_TELEGRAM_TOKEN}'\n"
-        "export TELEGRAM_HOME_CHANNEL='123456789'\n",
-        encoding="utf-8",
-    )
+def test_profile_env_is_ignored_even_with_exported_matching_quotes(tmp_path: Path) -> None:
+    registry = _registry(tmp_path)
+    registry.hermes_user_home.mkdir(parents=True)
+    registry.hermes_user_env_path.write_text('export GEMINI_API_KEY="test-token"\n', encoding="utf-8")
+    assert registry.load_user_private_env() == {}
+    assert registry.hermes_user_env_path.read_text() == 'export GEMINI_API_KEY="test-token"\n'
 
-    assert UserOnboarding._read_env(path) == {
-        "GEMINI_API_KEY": VALID_GEMINI_KEY,
-        "TELEGRAM_BOT_TOKEN": VALID_TELEGRAM_TOKEN,
-        "TELEGRAM_HOME_CHANNEL": "123456789",
-    }
 
 
 def test_legacy_profile_is_rejected_before_any_prompt(tmp_path: Path) -> None:
@@ -436,7 +426,7 @@ def test_legacy_profile_is_rejected_before_any_prompt(tmp_path: Path) -> None:
     output = StringIO()
 
     with pytest.raises(LegacyProfileMigrationRequired, match="explicit migration"):
-        UserOnboarding(registry, io_in=StringIO(), io_out=output, environ={}).run()
+        onboard_with_scoped_credentials(registry, io_in=StringIO(), io_out=output, environ={}).run()
 
     assert output.getvalue() == ""
     assert registry.load_user() is None
@@ -446,7 +436,7 @@ def test_eof_cancels_without_saving_onboarding(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     output = StringIO()
 
-    result = UserOnboarding(registry, io_in=StringIO(), io_out=output, environ={}).run()
+    result = onboard_with_scoped_credentials(registry, io_in=StringIO(), io_out=output, environ={}).run()
 
     assert result is None
     assert not registry.gumi_profile_path.exists()
@@ -457,7 +447,7 @@ def test_two_consecutive_interrupts_at_mode_choice_cancel_setup(tmp_path: Path) 
     registry = _registry(tmp_path)
     output = StringIO()
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_InterruptingInput(KeyboardInterrupt(), KeyboardInterrupt()),
         io_out=output,
@@ -476,7 +466,7 @@ def test_custom_quiet_hours_reprompts_until_valid(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
     output = StringIO()
 
-    UserOnboarding(
+    onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input(
             "c",
@@ -510,7 +500,7 @@ def test_custom_quiet_hours_reprompts_until_valid(tmp_path: Path) -> None:
 def test_onboarding_materializes_only_private_canonical_artifacts(tmp_path: Path) -> None:
     registry = _registry(tmp_path)
 
-    result = UserOnboarding(
+    result = onboard_with_scoped_credentials(
         registry,
         io_in=_onboarding_input("d", "y", "n", "n", "y", "y", "g"),
         io_out=StringIO(),
@@ -554,8 +544,7 @@ def test_onboarding_materializes_only_private_canonical_artifacts(tmp_path: Path
     assert stat.S_IMODE(provenance.stat().st_mode) == 0o600
     assert stat.S_IMODE(provenance.parent.stat().st_mode) == 0o700
     private_env = registry.hermes_user_home / ".env"
-    assert VALID_GEMINI_KEY in private_env.read_text(encoding="utf-8")
-    assert VALID_TELEGRAM_TOKEN in private_env.read_text(encoding="utf-8")
+    assert not private_env.exists()
 
 
 def _artifact_field_names(value: object) -> set[str]:

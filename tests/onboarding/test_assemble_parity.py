@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
+
 import json
 import os
 import stat
@@ -94,7 +99,8 @@ def _run_cli(registry: ProfileRegistry, *, armed: bool = True) -> None:
     # armed: token + numeric target + accept the default "arm" + keep the delivery
     # defaults, first message: Gumi sends first. Not armed: blank token (delivery
     # stays off), first message: wait for the user.
-    telegram = [TOKEN, CHAT_ID, "", "", "g"] if armed else ["", "w"]
+    seed_credentials({"TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_HOME_CHANNEL": CHAT_ID})
+    telegram = ["y", "y", "g"] if armed else ["y", "n", "w"]
     values = _battery_values()
     battery = [str(values[item["item_id"]]) for item in ib.USER_BASELINE_ITEMS]
     script = ["d", "c", *battery, "", "", "", *telegram]
@@ -334,5 +340,4 @@ def test_secrets_only_in_private_env(tmp_path: Path) -> None:
         assert TOKEN not in text, path
         assert gemini not in text, path
     env_path = registry.hermes_user_env_path
-    assert TOKEN in env_path.read_text(encoding="utf-8")
-    assert stat.S_IMODE(os.stat(env_path).st_mode) == 0o600
+    assert not env_path.exists()

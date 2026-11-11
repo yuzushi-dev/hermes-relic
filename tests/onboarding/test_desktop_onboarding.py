@@ -6,6 +6,11 @@ card and answers from a script, like the Telegram suite does.
 
 from __future__ import annotations
 
+import pytest
+from tests.secret_fakes import seed_credentials
+
+pytestmark = pytest.mark.usefixtures("scoped_secrets")
+
 import json
 import threading
 from pathlib import Path
@@ -83,6 +88,7 @@ class Env:
         self.activations: list[int] = []
         env = {"TELEGRAM_ALLOWED_USERS": USER, "TELEGRAM_BOT_TOKEN": TOKEN}
         env.update(env_overrides)
+        seed_credentials(env)
         self.asker = asker
         self.controller = desk.DesktopOnboardingController(
             relic_home=self.relic_home,

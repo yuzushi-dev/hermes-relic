@@ -4,8 +4,8 @@ A single LLM judge with one prompt at low temperature is vulnerable to model
 bias, prompt bias, position bias and leniency bias. This jury mitigates all four
 with a genuine cross-family panel plus a non-LLM voter:
 
-  LLM panel   THREE distinct free model families on the local Ollama cloud
-              endpoint (gemma4 / gpt-oss / minimax), cross-family disagreement
+  LLM panel   THREE distinct model families on local Ollama by default
+              (gemma / qwen / llama), cross-family disagreement
               cancels per-model bias. Each judge votes by FORCED CHOICE ("which
               candidate does the text best evidence, or NONE") instead of yes/no,
               kills leniency/yes-bias, with SAMPLES samples each at temp>0 and
@@ -36,12 +36,10 @@ import urllib.request
 from collections import Counter
 from pathlib import Path
 
-# Endpoint. The local daemon (http://localhost:11434/v1) proxies to cloud but is
-# a single-account bottleneck: rate-limited for a 40k-call audit. Point at the
-# direct cloud endpoint and rotate across several API keys to spread the load.
-#   export RELIC_OLLAMA_ENDPOINT=https://ollama.com/v1
+# Local-only defaults. Remote endpoints and cloud model tags require explicit
+# operator configuration; never route a model to a third-party host implicitly.
 LOCAL_ENDPOINT = os.environ.get("RELIC_OLLAMA_ENDPOINT", "http://localhost:11434/v1")
-CLOUD_ENDPOINT = os.environ.get("RELIC_JURY_CLOUD_ENDPOINT", "https://ollama.com/v1")
+CLOUD_ENDPOINT = os.environ.get("RELIC_JURY_CLOUD_ENDPOINT", "")
 ENDPOINT = LOCAL_ENDPOINT
 _IS_CLOUD = "ollama.com" in ENDPOINT
 
@@ -69,7 +67,7 @@ def _next_key() -> str | None:
 # Cross-family panel: each entry is (model, prompt_template). Distinct model
 # families, so agreement is not one model agreeing with itself. On the direct
 # cloud endpoint, tags carry no "-cloud" suffix; on the local proxy they do.
-_PANEL_LOCAL = [("gemma4-e4b", 0), ("gpt-oss:120b", 1), ("minimax-m3", 0)]
+_PANEL_LOCAL = [("gemma4-e4b", 0), ("qwen3:8b", 1), ("llama3.1:8b", 0)]
 _PANEL_CLOUD = [("gemma4:31b", 0), ("gpt-oss:120b", 1), ("minimax-m3", 0)]
 JUDGES: list[tuple[str, int]] = _PANEL_CLOUD if _IS_CLOUD else _PANEL_LOCAL
 SAMPLES = 2  # samples per judge (self-consistency); total LLM votes = 3*SAMPLES
@@ -82,7 +80,7 @@ _CLOUD_JUDGE_MODELS = frozenset({"gpt-oss:120b", "minimax-m3"})
 def _endpoint_for_model(model: str) -> str:
     if _IS_CLOUD:
         return ENDPOINT
-    if model in _CLOUD_JUDGE_MODELS:
+    if model in _CLOUD_JUDGE_MODELS and CLOUD_ENDPOINT:
         return CLOUD_ENDPOINT
     return LOCAL_ENDPOINT
 

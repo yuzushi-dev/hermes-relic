@@ -5,6 +5,15 @@ import json
 from relic.checkin import attribution_jury
 
 
+def test_default_jury_has_no_implicit_cloud_route(monkeypatch):
+    monkeypatch.setattr(attribution_jury, "CLOUD_ENDPOINT", "")
+    monkeypatch.setattr(attribution_jury, "_IS_CLOUD", False)
+    for model in ["gpt-oss:120b", "minimax-m3", *[m for m, _ in attribution_jury.JUDGES]]:
+        assert attribution_jury._endpoint_for_model(model) == attribution_jury.LOCAL_ENDPOINT
+    assert all(not model.endswith("-cloud") for model, _ in attribution_jury.JUDGES)
+
+
+
 def _fake_response():
     class Response:
         def __enter__(self):
@@ -21,7 +30,8 @@ def _fake_response():
     return Response()
 
 
-def test_jury_routes_cloud_families_and_keeps_local_judge_local(monkeypatch):
+def test_jury_routes_cloud_families_only_with_explicit_endpoint(monkeypatch):
+    monkeypatch.setattr(attribution_jury, "CLOUD_ENDPOINT", "https://ollama.com/v1")
     seen = []
 
     def fake_urlopen(request, timeout):

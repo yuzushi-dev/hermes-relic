@@ -859,7 +859,17 @@ def test_continuity_sync_processes_singleton_facets_without_subject_env(tmp_path
 def test_foreground_memory_provider_captures_consented_user_reply(tmp_path, monkeypatch) -> None:
     _registry, user = _runtime(tmp_path, monkeypatch)
     _enable_checkin(tmp_path)
-    current = datetime.now(timezone.utc).replace(hour=10, minute=0, second=0, microsecond=0)
+    current = NOW
+    # The reply must share the dispatch clock; wall time can be before 10:00
+    # or beyond the 12-hour capture window on the machine running this test.
+    from relic.checkin import reply_capture
+
+    class ReplyClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current + timedelta(minutes=1)
+
+    monkeypatch.setattr(reply_capture, "datetime", ReplyClock)
     dispatch_action(
         "checkin-message",
         relic_home=tmp_path,

@@ -144,7 +144,7 @@ def _call_llm_extract(
         import re as _re
         import urllib.request as _urllib_request
         endpoint = os.environ.get("RELIC_OLLAMA_ENDPOINT", "http://localhost:11434/v1")
-        model = os.environ.get("RELIC_OLLAMA_MODEL", "gemma4:31b-cloud")
+        model = os.environ.get("RELIC_OLLAMA_MODEL", "gemma4-e4b")
         _payload = json.dumps({
             "model": model,
             "messages": [

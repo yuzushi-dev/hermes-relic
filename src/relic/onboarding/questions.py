@@ -224,7 +224,7 @@ def build_questions() -> list[Question]:
         Question(
             "c_pas",
             "choice",
-            "May I learn from what you write in our chats? (You can change this later.)",
+            "May I learn from our chats? Local classifiers by default; remote opt-in sends excerpts to your chosen host (e.g. Ollama Cloud, ollama.com).",
             _recommended_yes_no(),
         ),
         Question(

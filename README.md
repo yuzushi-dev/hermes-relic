@@ -6,10 +6,10 @@
 </p>
 
 <div align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0--or--later-ff003c?style=flat-square&labelColor=120a0d" alt="License: AGPL-3.0-or-later"></a> <img src="https://img.shields.io/badge/PYTHON-3.10%2B-00e5ff?style=flat-square&labelColor=120a0d" alt="Python 3.10 or newer"> <img src="https://img.shields.io/badge/RUNS-FULLY_LOCAL-00e57e?style=flat-square&labelColor=120a0d" alt="Runs fully local"> <img src="https://img.shields.io/badge/HERMES-0.23%2B-ffe23a?style=flat-square&labelColor=120a0d" alt="Hermes 0.23 or newer">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-AGPL--3.0--or--later-ff003c?style=flat-square&labelColor=120a0d" alt="License: AGPL-3.0-or-later"></a> <img src="https://img.shields.io/badge/PYTHON-3.10%2B-00e5ff?style=flat-square&labelColor=120a0d" alt="Python 3.10 or newer"> <img src="https://img.shields.io/badge/STORAGE-LOCAL-00e57e?style=flat-square&labelColor=120a0d" alt="Local storage; configurable inference"> <img src="https://img.shields.io/badge/HERMES-0.23%2B-ffe23a?style=flat-square&labelColor=120a0d" alt="Hermes 0.23 or newer">
 </div>
 
-**Gumi is a companion that gets to know you, and helps you reflect on who you are. It builds a longitudinal model of you from published psychometric instruments (TIPI for the Big Five, ECR-RS for attachment) used as a self-report baseline, plus your consented check-ins, and it runs on your machine: nothing built into this package sends what it learns about you anywhere.**
+**Gumi is a companion that gets to know you, and helps you reflect on who you are. It builds a longitudinal model of you from published psychometric instruments (TIPI for the Big Five, ECR-RS for attachment) used as a self-report baseline, plus your consented check-ins, and stores its model on your machine. Inference follows your configured Hermes provider; optional media and explicitly configured remote classifiers send content to their providers.**
 
 > **Paper:** Veri', D. (2026). [*Relic and Gumi: Governing Memory, Safety, and Continuity in Diegetic Relational Agents*](https://arxiv.org/abs/2611.08504). arXiv:2611.08504 [cs.HC]. The paper presents the architecture and an exploratory two-participant pilot; it makes no claims of clinical efficacy or diagnosis, and neither does this plugin. Gumi supports introspection, it is not a diagnostic tool.
 >
@@ -27,7 +27,7 @@ It can reach out first, too, on its own schedule instead of only replying to you
 
 A safety critic blocks false claims of dependency, physical presence, or clinical language in every reply. Scheduled messages also get a naturalness pass that scores AI-sounding phrasing, with hard-blocking opt-in while its threshold is still being calibrated.
 
-The reference setup runs fully local: Gemma 4 E4B at 16K context, on your own hardware. A cloud LLM works too if you'd rather point it there; local is just what this reference setup uses.
+Classifier defaults use local Ollama at `http://localhost:11434` (Gemma 4 E4B; the attribution panel also needs Qwen 3 8B and Llama 3.1 8B). Missing local models fail without a cloud fallback. To opt into remote classification, explicitly set `RELIC_OLLAMA_ENDPOINT`, `RELIC_JURY_CLOUD_ENDPOINT`, or `RELIC_JUDGE_BASE_URL` and the corresponding model settings. Ollama Cloud (`https://ollama.com/v1`) receives chat excerpts if you select it; cloud tags on a local Ollama daemon also forward content to Ollama Cloud. Normal conversation uses your configured Hermes provider, which may be remote. Optional Gemini media uses Google services. Local storage does not imply local inference.
 
 ## Where it comes from
 
@@ -35,7 +35,7 @@ RELIC Gumi is the consumer face of [`relic-oss`](https://github.com/yuzushi-dev/
 
 ## The engram only you can read
 
-A 60-facet registry exists to hold a longitudinal model of you, seeded with conservative defaults and filled in from eligible, consented check-in and passive observations over time; a fresh install starts nearly empty and fills in only as consented check-ins accumulate. Nothing here is meant to diagnose or label you. Whatever gets stored stays in the model on your machine; nothing built into this package phones it home.
+A 60-facet registry exists to hold a longitudinal model of you, seeded with conservative defaults and filled in from eligible, consented check-in and passive observations over time; a fresh install starts nearly empty and fills in only as consented check-ins accumulate. Nothing here is meant to diagnose or label you. The stored model stays on your machine. Chat excerpts may be processed by your configured inference providers as described above.
 
 <div align="center">
   <img src="assets/readme/divider.svg" width="830" alt="Section divider">

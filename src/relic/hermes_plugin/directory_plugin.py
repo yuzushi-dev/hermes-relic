@@ -161,20 +161,52 @@ def _spawn_dispatch(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # The entry point's sys.path fallback is process-local. Carry the active
     # runtime into detached delivery too, including when it came from _vendor.
-    environment = {**os.environ, "RELIC_HOME": relic_home, "RELIC_RUNTIME_SCOPE_ID": runtime_scope_id}
+    from relic.secrets import SECRET_NAMES, scoped_credentials
+
+    credentials = scoped_credentials()
+    environment = {key: value for key, value in os.environ.items() if key not in SECRET_NAMES}
+    environment.update(RELIC_HOME=relic_home, RELIC_RUNTIME_SCOPE_ID=runtime_scope_id)
     runtime_parent = str(Path(__file__).resolve().parents[2])
     environment["PYTHONPATH"] = os.pathsep.join(
         part for part in (runtime_parent, environment.get("PYTHONPATH", "")) if part
     )
     with log_path.open("ab") as log:
-        subprocess.Popen(
+        process = subprocess.Popen(
             [sys.executable, "-m", "relic.hermes_plugin.directory_plugin", job],
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
+            text=True,
             stdout=log,
             stderr=log,
             start_new_session=True,
             env=environment,
         )
+        # Secrets cross only a private inherited pipe, never argv, logs or env.
+        try:
+            process.stdin.write(json.dumps(credentials))
+        finally:
+            process.stdin.close()
+
+
+def _dispatch_scoped_job(job: dict, credentials: dict) -> None:
+    """Restore only the parent's scoped snapshot in a detached worker."""
+    try:
+        from agent.secret_scope import (
+            set_secret_scope, reset_secret_scope,
+            set_multiplex_context, reset_multiplex_context,
+        )
+    except ImportError:
+        return  # Older hosts cannot safely run detached credentialed delivery.
+    from relic.secrets import SECRET_NAMES
+
+    values = {name: value for name, value in credentials.items()
+              if name in SECRET_NAMES and isinstance(value, str)}
+    scope = set_secret_scope(values, profile_home=str(job["hermes_home"]))
+    multiplex = set_multiplex_context(True)
+    try:
+        _dispatch_and_record(**job)
+    finally:
+        reset_secret_scope(scope)
+        reset_multiplex_context(multiplex)
 
 
 def _load_user_runtime(relic_home: str | None) -> tuple[str, str]:
@@ -983,4 +1015,4 @@ if __name__ == "__main__":
     _job = json.loads(sys.argv[1])
     _job["hermes_home"] = Path(_job["hermes_home"])
     _job["started_at"] = datetime.fromisoformat(_job["started_at"])
-    _dispatch_and_record(**_job)
+    _dispatch_scoped_job(_job, json.load(sys.stdin))

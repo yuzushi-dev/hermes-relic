@@ -206,6 +206,9 @@ from relic.hermes_plugin import directory_plugin
 captured = {}
 def capture(command, **options):
     captured.update(options)
+    from types import SimpleNamespace
+    import io
+    return SimpleNamespace(stdin=io.StringIO())
 original = __import__('subprocess').Popen
 __import__('subprocess').Popen = capture
 try:

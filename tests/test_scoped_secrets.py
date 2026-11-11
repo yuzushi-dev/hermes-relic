@@ -93,6 +93,75 @@ def test_registry_and_onboarding_never_open_dotenv(monkeypatch, tmp_path, scoped
         assert f"hermes --profile relic-gumi config set {name}" in output.getvalue()
 
 
+def test_manifest_declares_optional_scoped_secrets():
+    from pathlib import Path
+    import yaml
+    from relic.secrets import SECRET_NAMES
+
+    manifest = yaml.safe_load((Path(__file__).parents[1] / "plugin.yaml").read_text())
+    assert manifest.get("requires_env") == []  # Core continuity also works without Telegram/media.
+    fields = manifest.get("config_schema", {})
+    assert {field["env"] for field in fields.values() if field["type"] == "secret"} == set(SECRET_NAMES)
+    assert all(field.get("required") is False for field in fields.values())
+
+
+def test_detached_delivery_never_inherits_ambient_credentials(monkeypatch, tmp_path, scoped_secrets):
+    import io
+    import json
+    from types import SimpleNamespace
+    from relic.hermes_plugin import directory_plugin
+    from relic.secrets import SECRET_NAMES
+
+    scoped_secrets["TELEGRAM_BOT_TOKEN"] = "test-scoped-token"
+    monkeypatch.setattr(directory_plugin.os, "environ", {name: "test-wrong-profile" for name in SECRET_NAMES})
+    captured = {}
+    pipe = io.StringIO()
+    class Pipe:
+        def write(self, value):
+            return pipe.write(value)
+        def close(self):
+            pass
+    def spawn(command, **kwargs):
+        captured.update(command=command, **kwargs)
+        return SimpleNamespace(stdin=Pipe())
+    monkeypatch.setattr("subprocess.Popen", spawn)
+    directory_plugin._spawn_dispatch("test-message", "checkin", tmp_path, str(tmp_path / "relic"), "test-scope")
+    assert not (set(SECRET_NAMES) & captured["env"].keys())
+    assert "test-scoped-token" not in str(captured["command"])
+    assert json.loads(pipe.getvalue()) == {"TELEGRAM_BOT_TOKEN": "test-scoped-token"}
+    assert "test-scoped-token" not in (tmp_path / "logs/cron-dispatch.log").read_text()
+
+
+def test_detached_worker_restores_scope_in_a_real_child(tmp_path):
+    import os
+    import subprocess
+    import textwrap
+
+    script = textwrap.dedent('''
+        from pathlib import Path
+        from agent.secret_scope import get_secret, current_secret_scope
+        from relic.hermes_plugin import directory_plugin as plugin
+        from relic.secrets import secret_value
+        import os
+        os.environ["TELEGRAM_BOT_TOKEN"] = "test-wrong-profile"
+        seen = []
+        def deliver(**job):
+            assert secret_value("TELEGRAM_BOT_TOKEN") == "test-scoped-token"
+            assert get_secret("GEMINI_API_KEY") is None
+            seen.append(True)
+        plugin._dispatch_and_record = deliver
+        plugin._dispatch_scoped_job({"hermes_home": Path("/test-profile")}, {"TELEGRAM_BOT_TOKEN": "test-scoped-token"})
+        assert seen == [True]
+        assert current_secret_scope() is None
+        print("scoped child passed")
+    ''')
+    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
+        env={"PATH": os.defpath, "PYTHONPATH": os.pathsep.join(sys.path), "HOME": str(tmp_path)},
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "scoped child passed"
+
+
 def test_scope_error_fails_closed(monkeypatch):
     from relic.secrets import secret_value
 

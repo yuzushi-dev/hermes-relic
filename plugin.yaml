@@ -3,6 +3,35 @@ kind: standalone
 version: 0.1.0
 requires_hermes: ">=0.23.0"
 description: Full Relic continuity, relational context, check-in, lifecycle, output safety, and turn synchronization for foreground User conversations.
+# Continuity and Desktop onboarding do not require Telegram or paid media.
+# Declaring these as requires_env would disable the entire plugin when absent.
+requires_env: []
+config_schema:
+  telegram_bot_token:
+    type: secret
+    env: TELEGRAM_BOT_TOKEN
+    required: false
+    description: Telegram delivery and Telegram onboarding bot token.
+  telegram_allowed_users:
+    type: secret
+    env: TELEGRAM_ALLOWED_USERS
+    required: false
+    description: Comma-separated numeric Telegram user IDs authorized for onboarding.
+  telegram_home_channel:
+    type: secret
+    env: TELEGRAM_HOME_CHANNEL
+    required: false
+    description: Numeric Telegram target for explicitly armed scheduled delivery.
+  gemini_api_key:
+    type: secret
+    env: GEMINI_API_KEY
+    required: false
+    description: Optional Google media key; separate media opt-in is still required.
+  ollama_api_keys:
+    type: secret
+    env: OLLAMA_API_KEYS
+    required: false
+    description: Optional comma-separated keys for explicitly configured Ollama Cloud classification.
 provides_tools:
   - gumi_read_canon
   - gumi_write_report

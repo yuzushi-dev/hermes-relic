@@ -215,7 +215,7 @@ class LyriaGenerator:
 
         resp = requests.post(url, headers={"x-goog-api-key": self.api_key}, json=payload, timeout=120)
         if resp.status_code != 200:
-            raise RuntimeError(f"Lyria API error {resp.status_code}: {resp.text[:300]}")
+            raise RuntimeError(f"Lyria API error: HTTP {resp.status_code}")
 
         result = resp.json()
         parts = result.get("candidates", [{}])[0].get("content", {}).get("parts", [])

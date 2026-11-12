@@ -199,7 +199,7 @@ def _generate_image_via_gemini(
 
     response = requests.post(url, headers={"x-goog-api-key": api_key}, json=payload, timeout=timeout)
     if response.status_code != 200:
-        raise RuntimeError(f"Image generation failed: {response.status_code} {response.text[:200]}")
+        raise RuntimeError(f"Image generation failed: HTTP {response.status_code}")
 
     result = response.json()
     parts = result.get("candidates", [{}])[0].get("content", {}).get("parts", [])

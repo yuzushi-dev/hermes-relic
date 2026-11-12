@@ -43,6 +43,64 @@ Path(sys.argv[1]).write_text(json.dumps({
     assert "test-private-conversation" not in log and "test-private-token" not in log
 
 
+def test_real_child_inherits_network_settings_but_not_provider_credentials(
+    monkeypatch, tmp_path, scoped_secrets,
+):
+    network_settings = {
+        "SSL_CERT_FILE": "/test-ca/cert.pem",
+        "SSL_CERT_DIR": "/test-ca/certs",
+        "REQUESTS_CA_BUNDLE": "/test-ca/requests.pem",
+        "CURL_CA_BUNDLE": "/test-ca/curl.pem",
+        "HTTP_PROXY": "http://test-user:test-password@proxy.invalid:8080",
+        "HTTPS_PROXY": "http://secure-proxy.invalid:8080",
+        "ALL_PROXY": "socks5://all-proxy.invalid:1080",
+        "NO_PROXY": "localhost,test.invalid",
+        "http_proxy": "http://lower-proxy.invalid:8080",
+        "https_proxy": "http://lower-secure-proxy.invalid:8080",
+        "all_proxy": "socks5://lower-all-proxy.invalid:1080",
+        "no_proxy": "127.0.0.1,lower-test.invalid",
+    }
+    provider_credentials = {
+        "OPENAI_API_KEY": "test-openai-key",
+        "ANTHROPIC_API_KEY": "test-anthropic-key",
+    }
+    for name, value in {**network_settings, **provider_credentials}.items():
+        monkeypatch.setenv(name, value)
+    receipt = tmp_path / "network-receipt.json"
+    script = '''
+import json, os, sys
+from pathlib import Path
+json.load(sys.stdin)
+names = json.loads(sys.argv[2])
+Path(sys.argv[1]).write_text(json.dumps({name: os.environ.get(name) for name in names}))
+'''
+    real_spawn = subprocess.Popen
+    children = []
+
+    def spawn(command, **kwargs):
+        child = real_spawn([
+            sys.executable, "-c", script, str(receipt),
+            json.dumps([*network_settings, *provider_credentials]),
+        ], **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    try:
+        assert plugin._spawn_dispatch(
+            "test-message", "checkin", tmp_path, str(tmp_path / "relic"), "test-scope",
+        ) is True
+        assert children[0].wait(timeout=10) == 0
+        assert json.loads(receipt.read_text()) == {
+            **network_settings, **dict.fromkeys(provider_credentials),
+        }
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+
+
 def test_nonreading_child_does_not_deadlock_caller(monkeypatch, tmp_path, scoped_secrets):
     real_spawn = subprocess.Popen
     children = []

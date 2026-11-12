@@ -205,8 +205,14 @@ def _spawn_dispatch(
     # dispatcher prose/media gates, local renderer endpoints and Gemma judge.
     # HERMES_PROFILES_HOME is used by registry/outcome recording; no provider
     # credentials or arbitrary HERMES_*/RELIC_* settings belong in the child env.
+    # Proxy URLs can contain the user's network credentials; deliberately carry
+    # them because delivery fails behind a proxy without them. No other
+    # credentials are inherited.
     allowed = {
         "PATH", "HOME", "LANG", "TMPDIR", "HERMES_PROFILES_HOME",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+        "http_proxy", "https_proxy", "all_proxy", "no_proxy",
         "RELIC_ENABLE_GOOGLE_MEDIA", "RELIC_COMFYUI_URL", "RELIC_ACESTEP_URL",
         "RELIC_PROSE_HARD_BLOCK", "RELIC_PROSE_GEMMA_JUDGE", "RELIC_PROSE_GEMMA_CUT",
         "RELIC_JUDGE_BASE_URL", "RELIC_JUDGE_MODEL",

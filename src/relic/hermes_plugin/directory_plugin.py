@@ -171,8 +171,8 @@ def _spawn_dispatch(
     hermes_home: Path,
     relic_home: str,
     runtime_scope_id: str,
-) -> None:
-    """Run message delivery detached from the cron worker.
+) -> bool:
+    """Return whether the private job was handed off to a detached worker.
 
     Delivery can outlast the host's 30s transform_llm_output timeout and the
     cron worker's lifetime: local media generation (ACE-Step, ComfyUI) takes
@@ -200,7 +200,7 @@ def _spawn_dispatch(
                          ensure_ascii=False).encode("utf-8")
     if len(payload) > _DISPATCH_PAYLOAD_LIMIT:
         logger.warning("relic dispatch rejected: oversized payload (%d bytes)", len(payload))
-        return
+        return False
     environment = {key: value for key, value in os.environ.items() if key not in SECRET_NAMES}
     environment.update(RELIC_HOME=relic_home, RELIC_RUNTIME_SCOPE_ID=runtime_scope_id)
     runtime_parent = str(Path(__file__).resolve().parents[2])
@@ -231,6 +231,7 @@ def _spawn_dispatch(
     with log_path.open("a", encoding="utf-8") as log:
         log.write(f"dispatch pid={process.pid} bytes={len(payload)} "
                   f"handoff={'queued' if handed_off else 'failed'}\n")
+    return handed_off
 
 
 def _dispatch_scoped_job(job: dict, credentials: dict) -> None:
@@ -860,10 +861,16 @@ def _register_hooks(
                         if kind == "diegetic":
                             message_text = _ensure_diegetic_question_mark(message_text)
                         if os.environ.get("_RELIC_MANUAL_DRYRUN") != "1":
-                            _spawn_dispatch(
+                            if _spawn_dispatch(
                                 message_text, kind, hermes_home, relic_home, runtime_scope_id
+                            ):
+                                return "[SILENT]"
+                            if kind == "checkin":
+                                _discard_unconfirmed_checkin(relic_home)
+                            return _first_message_output(
+                                dependencies, hermes_home, relic_home,
+                                _text(kwargs.get("session_id")), message_text,
                             )
-                            return "[SILENT]"
                         dryrun = _dispatch_and_record(
                             message_text,
                             kind,

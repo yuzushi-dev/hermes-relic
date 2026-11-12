@@ -71,6 +71,60 @@ def test_oversized_payload_is_rejected_before_spawn(monkeypatch, tmp_path, scope
     plugin._spawn_dispatch("x" * 300_000, "checkin", tmp_path, str(tmp_path / "relic"), "test-scope")
 
 
+@pytest.mark.parametrize("failure", ["oversize", "nonreading"])
+def test_failed_handoff_clears_pending_checkin(monkeypatch, tmp_path, scoped_secrets, failure):
+    import sqlite3
+    from datetime import datetime, timezone
+    from tests.test_hermes_directory_plugin import (
+        _write_cron_reservation, _bridge_module, _dependencies, _registered_hooks,
+    )
+
+    hermes_home, relic_home = _write_cron_reservation(
+        tmp_path, kind="checkin", job_name="gumi_checkin_message", job_id="handofffail",
+    )
+    db_path = relic_home / "user/checkin/relic.db"
+    db_path.parent.mkdir(parents=True)
+    with sqlite3.connect(db_path) as db:
+        db.executescript('''
+            CREATE TABLE checkin_exchanges (id INTEGER PRIMARY KEY, facet_id TEXT,
+                question_text TEXT, reply_text TEXT, asked_at TEXT);
+            CREATE TABLE checkin_features (id INTEGER PRIMARY KEY, tick_id TEXT,
+                posture TEXT, created_at TEXT);
+        ''')
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute("INSERT INTO checkin_exchanges VALUES (1, 'facet', 'question', NULL, ?)", (now,))
+        db.execute("INSERT INTO checkin_features VALUES (1, ?, 'ask', ?)", (now, now))
+    with _bridge_module() as bridge:
+        dependencies, *_ = _dependencies()
+        dependencies.resolve_hermes_home.return_value = hermes_home
+        _, hooks = _registered_hooks(bridge, dependencies, relic_home=str(relic_home))
+    monkeypatch.setattr(plugin, "_first_message_output", lambda *args: "not delivered")
+    real_spawn = subprocess.Popen
+    children = []
+    def spawn(command, **kwargs):
+        if failure == "oversize":
+            pytest.fail("oversized payload spawned a child")
+        child = real_spawn([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
+        children.append(child)
+        return child
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    try:
+        result = hooks["transform_llm_output"](
+            response_text="x" * (300_000 if failure == "oversize" else 100_000),
+            platform="cron", session_id="cron_handofffail_20260101_120000",
+        )
+        with sqlite3.connect(db_path) as db:
+            assert db.execute("SELECT count(*) FROM checkin_exchanges").fetchone() == (0,)
+            assert db.execute("SELECT count(*) FROM checkin_features").fetchone() == (0,)
+        assert result == "not delivered"
+        assert all(child.poll() is not None for child in children)
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+
+
 @pytest.mark.parametrize("payload", [b"{" , b"x" * (256 * 1024 + 1), b"[]", b'{"job":{},"credentials":{}}'])
 def test_worker_rejects_invalid_or_oversized_private_input(tmp_path, payload):
     import os

@@ -26,5 +26,6 @@ def inline_cron_dispatch(monkeypatch):
         directory_plugin._dispatch_and_record(
             message_text, kind, hermes_home, relic_home, runtime_scope_id
         )
+        return True  # Match the successful private handoff contract.
 
     monkeypatch.setattr(directory_plugin, "_spawn_dispatch", spawn)

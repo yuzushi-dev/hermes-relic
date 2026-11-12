@@ -223,8 +223,15 @@ def test_legacy_cli_rejects_credential_files_before_reading(tmp_path, monkeypatc
     def forbidden(*args, **kwargs):
         pytest.fail("credential file was read")
     monkeypatch.setattr(Path, "read_text", forbidden)
-    with pytest.raises(MigrationError, match="hermes --profile relic-gumi config set"):
+    from relic.secrets import credential_setup_commands
+
+    with pytest.raises(MigrationError) as exc:
         read_private_env(tmp_path / ".env")
+    assert str(exc.value) == (
+        "Credential-file migration is not supported. Configure credentials privately.\n"
+        + credential_setup_commands()
+        + "\nThen rerun /gumi-setup."
+    )
 
 
 def test_scope_error_fails_closed(monkeypatch):

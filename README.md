@@ -80,7 +80,7 @@ may still leave PM-created environment/cache artifacts: these are not rolled bac
 this installer. See [Hermes integration](docs/hermes-integration.md) for evidence and
 isolation limits.
 
-The installer no longer asks questions. Onboarding (the psychometric baseline, preferences, optional media, and consents) happens in a chat with your own bot: on Telegram with buttons, one per row, for the closed answers and free text for the open ones; in the Hermes Desktop chat panel, the CLI or the TUI with one native picker per question (`/gumi-setup` starts or resumes it, and while the setup is incomplete the first message is answered by a notice inviting you to run it). Every question and where its answer goes is listed in [docs/onboarding-fields.md](docs/onboarding-fields.md). Send `/gumi-setup` to the bot to redo it. `relic-gumi configure` stays as an advanced command-line fallback.
+The installer no longer asks questions. Onboarding (the psychometric baseline, preferences, optional media, and consents) happens in a chat with your own bot: on Telegram with buttons, one per row, for the closed answers and free text for the open ones; in the Hermes Desktop chat panel, the CLI or the TUI with one native picker per question (`/gumi-setup` starts or resumes it, and while the setup is incomplete the first message is answered by a notice inviting you to run it). Every question and where its answer goes is listed in [docs/onboarding-fields.md](docs/onboarding-fields.md). Send `/gumi-setup` to the bot to redo it. `relic-gumi configure` only prints instructions and exits with status 1; it does not perform onboarding. Use `/gumi-setup` inside the target Hermes profile.
 
 If an AI agent installs this for you, it follows [AGENTS.md](AGENTS.md). In short, it:
 

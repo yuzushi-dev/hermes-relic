@@ -593,9 +593,12 @@ def migrate_legacy_subject(
 
 def read_private_env(path: Path) -> dict[str, str]:
     """Reject the legacy credential-file route without opening the supplied path."""
+    from relic.secrets import credential_setup_commands
+
     raise MigrationError(
-        "Credential-file migration is not supported. Configure credentials privately "
-        "with hermes --profile relic-gumi config set <NAME>, then rerun /gumi-setup."
+        "Credential-file migration is not supported. Configure credentials privately.\n"
+        + credential_setup_commands()
+        + "\nThen rerun /gumi-setup."
     )
 
 

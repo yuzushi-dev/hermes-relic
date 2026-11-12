@@ -248,14 +248,18 @@ def test_setup_instructions_are_executable_and_warn_about_cli_exposure():
     assert "user must run" in text and "Agents must never" in text
 
 
-def test_real_hermes_single_profile_without_scope_uses_process_environment(monkeypatch):
+@pytest.mark.parametrize("multiplex, expected", [(False, "test-single-profile"), (True, "")])
+def test_real_hermes_unscoped_behavior_matches_host_mode(monkeypatch, multiplex, expected):
     scope = pytest.importorskip("agent.secret_scope")
     from relic.secrets import secret_value
     token = scope.set_secret_scope(None)
-    multiplex = scope.set_multiplex_context(False)
+    mode_token = scope.set_multiplex_context(multiplex)
     monkeypatch.setenv("GEMINI_API_KEY", "test-single-profile")
     try:
-        assert secret_value("GEMINI_API_KEY") == "test-single-profile"
+        if multiplex:
+            with pytest.raises(scope.UnscopedSecretError):
+                scope.get_secret("GEMINI_API_KEY")
+        assert secret_value("GEMINI_API_KEY") == expected
     finally:
         scope.reset_secret_scope(token)
-        scope.reset_multiplex_context(multiplex)
+        scope.reset_multiplex_context(mode_token)

@@ -88,4 +88,3 @@ print('rejected')
                             capture_output=True, timeout=10)
     assert result.returncode == 0
     assert result.stdout == b"rejected\n" and result.stderr == b""
-

@@ -1,4 +1,4 @@
-"""Remedies for a failed activation: ``/gumi-setup retry`` and CLI cleanup."""
+"""Runtime retry clears errors; standalone CLI must not claim activation."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def test_setup_retry_without_error_or_completion_does_nothing(tmp_path):
     assert env.progress()["status"] == "complete"
 
 
-def test_configure_success_clears_a_stale_activation_error(tmp_path, monkeypatch):
+def test_standalone_configure_preserves_activation_error(tmp_path, monkeypatch, capsys):
     import relic.gumi_install as cli
     from relic.onboarding.store import ProgressStore
 
@@ -86,6 +86,11 @@ def test_configure_success_clears_a_stale_activation_error(tmp_path, monkeypatch
         lambda **kw: SimpleNamespace(recurring_active=True, first_message_scheduled=False),
     )
 
-    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 0
+    def forbidden(**kwargs):
+        pytest.fail("standalone CLI cannot activate the target profile")
+    monkeypatch.setattr(cli, "activate_runtime", forbidden)
+    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 1
+    assert "Credentials not checked" in capsys.readouterr().out
     saved = store.load()
-    assert "activation_error" not in saved and saved["status"] == "complete"
+    assert saved["activation_error"] == "RuntimeActivationError"
+    assert saved["status"] == "complete"

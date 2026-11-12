@@ -63,6 +63,9 @@ def test_registry_and_onboarding_never_open_dotenv(monkeypatch, tmp_path, scoped
     scoped_secrets["GEMINI_API_KEY"] = "test-token"
     registry = ProfileRegistry(relic_home=tmp_path / "relic", hermes_profiles_home=tmp_path / "profiles")
     user = registry.initialize_user()
+    registry.hermes_user_home.mkdir(parents=True)
+    registry.hermes_user_env_path.write_text("GEMINI_API_KEY=test-file-token\n")
+    registry.hermes_user_env_path.chmod(0o600)
     original_read = Path.read_text
     original_open = builtins.open
     original_path_open = Path.open
@@ -82,7 +85,23 @@ def test_registry_and_onboarding_never_open_dotenv(monkeypatch, tmp_path, scoped
     assert env_value({"GEMINI_API_KEY": "test-wrong-profile"}, registry, "GEMINI_API_KEY") == "test-token"
     from relic.onboarding.assemble import assemble, finalize
     finalize(registry, user, assemble({}, telegram_token="", chat_id=""))
-    assert not registry.hermes_user_env_path.exists()
+    from relic.hermes_plugin.telegram_onboarding import OnboardingController
+    from relic.hermes_plugin.desktop_onboarding import DesktopOnboardingController
+    from relic.gumi_plugin.checkin_media_dispatcher import _load_env
+    from relic.checkin.attribution_jury import _load_keys
+    from relic.user_runtime import _read_canonical_state
+    for controller_type in (OnboardingController, DesktopOnboardingController):
+        controller = object.__new__(controller_type)
+        controller.env = {"GEMINI_API_KEY": "test-wrong-profile"}
+        controller.relic_home = registry.relic_home
+        controller.profiles_home = registry.hermes_profiles_home
+        assert controller._value("GEMINI_API_KEY") == "test-token"
+    assert _load_env(tmp_path) == {}
+    assert _load_keys() == []
+    assert _read_canonical_state(registry.relic_home, registry.hermes_user_home).private_env == {"GEMINI_API_KEY": "test-token"}
+    # Test-only read through the saved original, after exercising trapped runtime paths.
+    with original_path_open(registry.hermes_user_env_path, encoding="utf-8") as stream:
+        assert stream.read() == "GEMINI_API_KEY=test-file-token\n"
     output = StringIO()
     onboarding = UserOnboarding(registry, io_in=StringIO("y\nn\nn\n"), io_out=output, environ={"GEMINI_API_KEY": "test-wrong-profile"}, gemini_validator=lambda key: key == "test-token")
     media, credentials = onboarding._collect_media({})

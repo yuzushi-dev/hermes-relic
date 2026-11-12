@@ -40,6 +40,7 @@ def test_media_message_is_dispatched_detached_from_the_hook(tmp_path: Path) -> N
         ),
         patch("relic.gumi_plugin.checkin_media_dispatcher.dispatch") as dispatch,
         patch("subprocess.Popen") as popen,
+        patch("relic.hermes_plugin.directory_plugin._write_dispatch_payload"),
     ):
         assert hooks["transform_llm_output"](
             response_text="tipo: music\nlo-fi track\nargomento: università",
@@ -61,6 +62,7 @@ def test_text_message_is_dispatched_detached_too(tmp_path: Path) -> None:
         ),
         patch("relic.gumi_plugin.checkin_media_dispatcher.dispatch") as dispatch,
         patch("subprocess.Popen") as popen,
+        patch("relic.hermes_plugin.directory_plugin._write_dispatch_payload"),
     ):
         assert hooks["transform_llm_output"](
             response_text="com'è andata la lezione?",

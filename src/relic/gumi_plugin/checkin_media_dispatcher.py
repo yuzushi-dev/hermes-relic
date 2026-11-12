@@ -589,7 +589,7 @@ def dispatch(
         blocked = _canonical_delivery_block(tipo, hermes_home)
         if blocked:
             return blocked
-        print(safe)  # stdout: User-facing text message
+        print(f"[dispatch] text delivery chars={len(safe)}", file=sys.stderr)
         delivered = _send_telegram_text(hermes_home, safe)
         if delivered:
             record_outbound_delivery(hermes_home, "telegram", "text")
@@ -737,7 +737,7 @@ def dispatch(
                 else "Ho condiviso un brano che ho buttato giù",
             )
         status = "DELIVERED" if delivered else "LOCAL_ONLY"
-        print(f"MEDIA:{media_file} [{status}] title={music_title!r}", file=sys.stderr)
+        print(f"MEDIA:{media_file} [{status}] title_chars={len(music_title)}", file=sys.stderr)
         # No stdout: music delivered directly via Telegram Bot API
         return {"tipo": "music", "success": True, "audio_path": media_file, "caption": caption, "telegram_delivered": delivered}
 
@@ -749,7 +749,7 @@ def dispatch(
         blocked = _canonical_delivery_block(tipo, hermes_home)
         if blocked:
             return blocked
-        print(safe)  # stdout: User-facing text message
+        print(f"[dispatch] text delivery chars={len(safe)}", file=sys.stderr)
         delivered = _send_telegram_text(hermes_home, safe)
         if delivered:
             record_outbound_delivery(hermes_home, "telegram", "text")

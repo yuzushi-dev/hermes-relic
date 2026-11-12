@@ -132,6 +132,39 @@ def _dispatch_and_record(
     return None
 
 
+_DISPATCH_PAYLOAD_LIMIT = 256 * 1024
+_DISPATCH_WRITE_TIMEOUT = 1.0
+
+
+def _write_dispatch_payload(pipe, payload: bytes) -> None:
+    """Bound private stdin handoff, including a child that never reads.
+
+    This budget starts after Popen returns; it does not bound process creation
+    or the detached delivery itself. Unbuffered nonblocking writes keep close()
+    from flushing a blocked userspace buffer after the deadline.
+    """
+    import selectors
+    import time
+
+    deadline = time.monotonic() + _DISPATCH_WRITE_TIMEOUT
+    fd = pipe.fileno()
+    os.set_blocking(fd, False)
+    pending = memoryview(payload)
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd, selectors.EVENT_WRITE)
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise TimeoutError("dispatch handoff timed out")
+            try:
+                count = os.write(fd, pending)
+            except BlockingIOError:
+                continue
+            if count <= 0:
+                raise OSError("dispatch pipe closed")
+            pending = pending[count:]
+
+
 def _spawn_dispatch(
     message_text: str,
     kind: str | None,
@@ -149,43 +182,55 @@ def _spawn_dispatch(
     import subprocess
     import sys
 
-    job = json.dumps({
+    job = {
         "message_text": message_text,
         "kind": kind,
         "hermes_home": str(hermes_home),
         "relic_home": relic_home,
         "runtime_scope_id": runtime_scope_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
-    }, ensure_ascii=False)
+    }
     log_path = Path(hermes_home) / "logs" / "cron-dispatch.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # The entry point's sys.path fallback is process-local. Carry the active
     # runtime into detached delivery too, including when it came from _vendor.
     from relic.secrets import SECRET_NAMES, scoped_credentials
 
-    credentials = scoped_credentials()
+    payload = json.dumps({"job": job, "credentials": scoped_credentials()},
+                         ensure_ascii=False).encode("utf-8")
+    if len(payload) > _DISPATCH_PAYLOAD_LIMIT:
+        logger.warning("relic dispatch rejected: oversized payload (%d bytes)", len(payload))
+        return
     environment = {key: value for key, value in os.environ.items() if key not in SECRET_NAMES}
     environment.update(RELIC_HOME=relic_home, RELIC_RUNTIME_SCOPE_ID=runtime_scope_id)
     runtime_parent = str(Path(__file__).resolve().parents[2])
     environment["PYTHONPATH"] = os.pathsep.join(
         part for part in (runtime_parent, environment.get("PYTHONPATH", "")) if part
     )
-    with log_path.open("ab") as log:
-        process = subprocess.Popen(
-            [sys.executable, "-m", "relic.hermes_plugin.directory_plugin", job],
-            stdin=subprocess.PIPE,
-            text=True,
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-            env=environment,
-        )
-        assert process.stdin is not None
-        # Secrets cross only a private inherited pipe, never argv, logs or env.
-        try:
-            process.stdin.write(json.dumps(credentials))
-        finally:
-            process.stdin.close()
+    process = subprocess.Popen(
+        [sys.executable, "-m", "relic.hermes_plugin.directory_plugin"],
+        stdin=subprocess.PIPE,
+        bufsize=0,
+        # Media providers can print prompts/errors: never route their streams
+        # into persistent logs. Only the metadata receipt below is logged.
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env=environment,
+    )
+    assert process.stdin is not None
+    handed_off = False
+    try:
+        _write_dispatch_payload(process.stdin, payload)
+        handed_off = True
+    except (OSError, TimeoutError):
+        process.kill()
+        process.wait(timeout=1)
+    finally:
+        process.stdin.close()
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"dispatch pid={process.pid} bytes={len(payload)} "
+                  f"handoff={'queued' if handed_off else 'failed'}\n")
 
 
 def _dispatch_scoped_job(job: dict, credentials: dict) -> None:
@@ -1010,10 +1055,24 @@ def _register_onboarding(
         return None
 
 
-if __name__ == "__main__":
+def _run_dispatch_worker() -> None:
+    """Read a bounded private envelope; argv never contains conversation text."""
     import sys
 
-    _job = json.loads(sys.argv[1])
-    _job["hermes_home"] = Path(_job["hermes_home"])
-    _job["started_at"] = datetime.fromisoformat(_job["started_at"])
-    _dispatch_scoped_job(_job, json.load(sys.stdin))
+    try:
+        raw = sys.stdin.buffer.read(_DISPATCH_PAYLOAD_LIMIT + 1)
+        if len(raw) > _DISPATCH_PAYLOAD_LIMIT:
+            return
+        envelope = json.loads(raw)
+        job, credentials = envelope["job"], envelope["credentials"]
+        if not isinstance(job, dict) or not isinstance(credentials, dict):
+            return
+        job["hermes_home"] = Path(job["hermes_home"])
+        job["started_at"] = datetime.fromisoformat(job["started_at"])
+    except (ValueError, TypeError, KeyError):
+        return  # Never print a malformed payload or exception containing it.
+    _dispatch_scoped_job(job, credentials)
+
+
+if __name__ == "__main__":
+    _run_dispatch_worker()

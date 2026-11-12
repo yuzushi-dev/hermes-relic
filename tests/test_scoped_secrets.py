@@ -125,30 +125,51 @@ def test_manifest_declares_optional_scoped_secrets():
 
 
 def test_detached_delivery_never_inherits_ambient_credentials(monkeypatch, tmp_path, scoped_secrets):
-    import io
     import json
-    from types import SimpleNamespace
+    import subprocess
     from relic.hermes_plugin import directory_plugin
     from relic.secrets import SECRET_NAMES
 
     scoped_secrets["TELEGRAM_BOT_TOKEN"] = "test-scoped-token"
-    monkeypatch.setattr(directory_plugin.os, "environ", {name: "test-wrong-profile" for name in SECRET_NAMES})
+    for name in SECRET_NAMES:
+        monkeypatch.setenv(name, "test-wrong-profile")
+    receipt = tmp_path / "receipt.json"
+    script = """
+import json, os, sys
+from pathlib import Path
+from relic.hermes_plugin import directory_plugin as plugin
+from relic.secrets import secret_value, SECRET_NAMES
+from agent.secret_scope import current_secret_scope
+assert not (set(SECRET_NAMES) & os.environ.keys())
+def deliver(**job):
+    assert job['message_text'] == 'test-message'
+    assert secret_value('TELEGRAM_BOT_TOKEN') == 'test-scoped-token'
+    assert secret_value('GEMINI_API_KEY') == ''
+    print('test-private-provider-output')
+    print('test-private-provider-output', file=sys.stderr)
+    Path(sys.argv[1]).write_text(json.dumps({'delivered': True}))
+plugin._dispatch_and_record = deliver
+plugin._run_dispatch_worker()
+assert current_secret_scope() is None
+"""
     captured = {}
-    pipe = io.StringIO()
-    class Pipe:
-        def write(self, value):
-            return pipe.write(value)
-        def close(self):
-            pass
+    real_spawn = subprocess.Popen
     def spawn(command, **kwargs):
-        captured.update(command=command, **kwargs)
-        return SimpleNamespace(stdin=Pipe())
-    monkeypatch.setattr("subprocess.Popen", spawn)
+        captured.update(command=command, env=kwargs["env"])
+        captured["process"] = real_spawn([sys.executable, "-c", script, str(receipt)], **kwargs)
+        return captured["process"]
+    monkeypatch.setattr(subprocess, "Popen", spawn)
     directory_plugin._spawn_dispatch("test-message", "checkin", tmp_path, str(tmp_path / "relic"), "test-scope")
+    assert captured["process"].wait(timeout=30) == 0
     assert not (set(SECRET_NAMES) & captured["env"].keys())
     assert "test-scoped-token" not in str(captured["command"])
-    assert json.loads(pipe.getvalue()) == {"TELEGRAM_BOT_TOKEN": "test-scoped-token"}
-    assert "test-scoped-token" not in (tmp_path / "logs/cron-dispatch.log").read_text()
+    assert "test-message" not in str(captured["command"])
+    assert json.loads(receipt.read_text()) == {"delivered": True}
+    log = (tmp_path / "logs/cron-dispatch.log").read_text()
+    assert "test-scoped-token" not in log and "test-message" not in log
+    assert "test-private-provider-output" not in log
+    assert "handoff=queued" in log
+
 
 
 def test_detached_worker_restores_scope_in_a_real_child(tmp_path):

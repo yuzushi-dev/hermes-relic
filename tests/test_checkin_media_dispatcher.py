@@ -268,7 +268,10 @@ def test_text_branch_sanitizes_stdout_and_telegram_text(
 
     assert result["output"] == "Ciao?"
     assert sent == ["Ciao?"]
-    assert capsys.readouterr().out == "Ciao?\n"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Ciao" not in captured.err
+    assert "text delivery chars=5" in captured.err
 
 
 def test_voice_branch_sanitizes_source_before_synthesis(

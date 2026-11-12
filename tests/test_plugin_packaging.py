@@ -206,15 +206,16 @@ from relic.hermes_plugin import directory_plugin
 captured = {}
 def capture(command, **options):
     captured.update(options)
-    from types import SimpleNamespace
-    import io
-    return SimpleNamespace(stdin=io.StringIO())
+    process = original([sys.executable, '-c', 'import sys; sys.stdin.buffer.read()'], **options)
+    captured['process'] = process
+    return process
 original = __import__('subprocess').Popen
 __import__('subprocess').Popen = capture
 try:
     directory_plugin._spawn_dispatch('probe', 'checkin', pathlib.Path(os.environ['HERMES_HOME']), os.environ['RELIC_HOME'], 'a' * 64)
 finally:
     __import__('subprocess').Popen = original
+assert captured['process'].wait(timeout=30) == 0
 child = __import__('subprocess').run([sys.executable, '-c', 'import relic; print(relic.__file__)'], env=captured['env'], capture_output=True, text=True, timeout=30)
 assert child.returncode == 0, child.stderr
 assert pathlib.Path(child.stdout.strip()) == pathlib.Path(relic.__file__)

@@ -251,9 +251,13 @@ def _spawn_dispatch(
         process.wait(timeout=1)
     finally:
         process.stdin.close()
-    with log_path.open("a", encoding="utf-8") as log:
-        log.write(f"dispatch pid={process.pid} bytes={len(payload)} "
-                  f"handoff={'queued' if handed_off else 'failed'}\n")
+    try:
+        with log_path.open("a", encoding="utf-8") as log:
+            log.write(f"dispatch pid={process.pid} bytes={len(payload)} "
+                      f"handoff={'queued' if handed_off else 'failed'}\n")
+    except OSError:
+        # A receipt failure must not invalidate a job already handed off.
+        pass
     return handed_off
 
 

@@ -101,6 +101,44 @@ Path(sys.argv[1]).write_text(json.dumps({name: os.environ.get(name) for name in 
             child.wait(timeout=5)
 
 
+def test_successful_real_handoff_survives_receipt_log_failure(
+    monkeypatch, tmp_path, scoped_secrets,
+):
+    # A directory at the log file path deterministically makes open("a") fail.
+    (tmp_path / "logs" / "cron-dispatch.log").mkdir(parents=True)
+    receipt = tmp_path / "worker-receipt.json"
+    script = '''
+import json, sys
+from pathlib import Path
+payload = json.load(sys.stdin)
+Path(sys.argv[1]).write_text(json.dumps(payload["job"]["message_text"]))
+'''
+    real_spawn = subprocess.Popen
+    children = []
+
+    def spawn(command, **kwargs):
+        child = real_spawn([sys.executable, "-c", script, str(receipt)], **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    try:
+        assert plugin._spawn_dispatch(
+            "test-successful-handoff", "checkin", tmp_path,
+            str(tmp_path / "relic"), "test-scope",
+        ) is True
+        assert children[0].wait(timeout=10) == 0
+        assert json.loads(receipt.read_text()) == "test-successful-handoff"
+    finally:
+        for child in children:
+            try:
+                child.wait(timeout=5)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+
+
 def test_nonreading_child_does_not_deadlock_caller(monkeypatch, tmp_path, scoped_secrets):
     real_spawn = subprocess.Popen
     children = []

@@ -228,6 +228,12 @@ print(json.dumps({'runtime': relic.__file__}))
     assert runtime == entry / ("src/relic/__init__.py" if kind == "root" else "_vendor/relic/__init__.py")
 
 
+def test_unregistered_unauthenticated_agy_adapter_is_not_shipped():
+    assert not (ROOT / "src/relic/hermes_plugin/agy_adapter.py").exists()
+    import importlib.util
+    assert importlib.util.find_spec("relic.hermes_plugin.agy_adapter") is None
+
+
 @pytest.mark.parametrize("kind", ["root", "profile"])
 def test_bundled_runtime_wins_over_other_relic_on_path(tmp_path, kind):
     entry = ROOT if kind == "root" else install_directory_plugin(tmp_path / "profile").path

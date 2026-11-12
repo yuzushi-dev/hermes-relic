@@ -131,8 +131,12 @@ def test_detached_delivery_never_inherits_ambient_credentials(monkeypatch, tmp_p
     from relic.secrets import SECRET_NAMES
 
     scoped_secrets["TELEGRAM_BOT_TOKEN"] = "test-scoped-token"
-    for name in SECRET_NAMES:
+    scoped_secrets["TELEGRAM_HOME_CHANNEL"] = "12345"
+    for name in (*SECRET_NAMES, "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "UNRECOGNIZED_SECRET"):
         monkeypatch.setenv(name, "test-wrong-profile")
+    monkeypatch.setenv("RELIC_PROSE_HARD_BLOCK", "1")
+    monkeypatch.setenv("RELIC_ENABLE_GOOGLE_MEDIA", "1")
+    monkeypatch.setenv("LC_CTYPE", "C.UTF-8")
     receipt = tmp_path / "receipt.json"
     script = """
 import json, os, sys
@@ -140,11 +144,25 @@ from pathlib import Path
 from relic.hermes_plugin import directory_plugin as plugin
 from relic.secrets import secret_value, SECRET_NAMES
 from agent.secret_scope import current_secret_scope
-assert not (set(SECRET_NAMES) & os.environ.keys())
+assert not (set((*SECRET_NAMES, 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'UNRECOGNIZED_SECRET')) & os.environ.keys())
+assert os.environ['RELIC_ENABLE_GOOGLE_MEDIA'] == '1'
+assert os.environ['RELIC_PROSE_HARD_BLOCK'] == '1'
+assert os.environ['LC_CTYPE'] == 'C.UTF-8'
+assert os.environ['RELIC_RUNTIME_SCOPE_ID'] == 'test-scope'
 def deliver(**job):
     assert job['message_text'] == 'test-message'
     assert secret_value('TELEGRAM_BOT_TOKEN') == 'test-scoped-token'
     assert secret_value('GEMINI_API_KEY') == ''
+    from relic.gumi_plugin import checkin_media_dispatcher as dispatcher
+    from unittest.mock import patch, Mock
+    response = Mock()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    response.read.return_value = b'{"ok":true}'
+    with patch.object(dispatcher, '_canonical_outbound_delivery_allowed', return_value=True), patch('urllib.request.urlopen', return_value=response) as send:
+        assert dispatcher._send_telegram_text(Path(job['hermes_home']), 'test-message')
+        request = send.call_args.args[0]
+        assert '/bottest-scoped-token/sendMessage' in request.full_url
     print('test-private-provider-output')
     print('test-private-provider-output', file=sys.stderr)
     Path(sys.argv[1]).write_text(json.dumps({'delivered': True}))

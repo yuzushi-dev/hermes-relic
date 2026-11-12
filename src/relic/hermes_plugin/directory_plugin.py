@@ -194,19 +194,36 @@ def _spawn_dispatch(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # The entry point's sys.path fallback is process-local. Carry the active
     # runtime into detached delivery too, including when it came from _vendor.
-    from relic.secrets import SECRET_NAMES, scoped_credentials
+    from relic.secrets import scoped_credentials
 
     payload = json.dumps({"job": job, "credentials": scoped_credentials()},
                          ensure_ascii=False).encode("utf-8")
     if len(payload) > _DISPATCH_PAYLOAD_LIMIT:
         logger.warning("relic dispatch rejected: oversized payload (%d bytes)", len(payload))
         return False
-    environment = {key: value for key, value in os.environ.items() if key not in SECRET_NAMES}
-    environment.update(RELIC_HOME=relic_home, RELIC_RUNTIME_SCOPE_ID=runtime_scope_id)
-    runtime_parent = str(Path(__file__).resolve().parents[2])
-    environment["PYTHONPATH"] = os.pathsep.join(
-        part for part in (runtime_parent, environment.get("PYTHONPATH", "")) if part
+    # Inherit only process essentials and delivery settings read by the worker:
+    # dispatcher prose/media gates, local renderer endpoints and Gemma judge.
+    # HERMES_PROFILES_HOME is used by registry/outcome recording; no provider
+    # credentials or arbitrary HERMES_*/RELIC_* settings belong in the child env.
+    allowed = {
+        "PATH", "HOME", "LANG", "TMPDIR", "HERMES_PROFILES_HOME",
+        "RELIC_ENABLE_GOOGLE_MEDIA", "RELIC_COMFYUI_URL", "RELIC_ACESTEP_URL",
+        "RELIC_PROSE_HARD_BLOCK", "RELIC_PROSE_GEMMA_JUDGE", "RELIC_PROSE_GEMMA_CUT",
+        "RELIC_JUDGE_BASE_URL", "RELIC_JUDGE_MODEL",
+    }
+    environment = {
+        key: value for key, value in os.environ.items()
+        if key in allowed or key.startswith("LC_")
+    }
+    environment.update(
+        HERMES_HOME=str(hermes_home), RELIC_HOME=relic_home,
+        RELIC_RUNTIME_SCOPE_ID=runtime_scope_id,
     )
+    runtime_parent = str(Path(__file__).resolve().parents[2])
+    # Use the active import path, not an ambient PYTHONPATH that may be stale.
+    environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(
+        part for part in (runtime_parent, *sys.path) if part
+    ))
     process = subprocess.Popen(
         [sys.executable, "-m", "relic.hermes_plugin.directory_plugin"],
         stdin=subprocess.PIPE,

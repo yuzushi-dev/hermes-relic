@@ -90,7 +90,7 @@ If an AI agent installs this for you, it follows [AGENTS.md](AGENTS.md). In shor
 4. runs `relic-gumi verify --skip-cron` and `hermes --profile relic-gumi gateway status`;
 5. tells you to open Telegram and send `/start` to your bot.
 
-The installer creates and owns its own Hermes profile, `<HERMES_HOME>/profiles/relic-gumi/`. It never reads or changes a profile called `gumi` (or any other name). If a `relic-gumi` profile already exists that the installer did not create (it is not empty and has no `.relic-gumi-installer.json` or `.relic-gumi/lifecycle.json`), `install`, `configure` and `uninstall` stop with an error before writing anything: pick another `--hermes-home`, or remove or rename that profile yourself. A run that failed halfway leaves a profile the next run accepts.
+The installer creates and owns its own Hermes profile, `<HERMES_HOME>/profiles/relic-gumi/`. It never reads or changes a profile called `gumi` (or any other name). If a `relic-gumi` profile already exists that the installer did not create (it is not empty and has no `.relic-gumi-installer.json` or `.relic-gumi/lifecycle.json`), `install` and `uninstall` stop with an error before writing anything: pick another `--hermes-home`, or remove or rename that profile yourself. A run that failed halfway leaves a profile the next run accepts.
 
 Model import details: the installer reads only the `model:` block of `<HERMES_HOME>/config.yaml` (never `.env`, `auth.json` or credential pools). A `base_url` containing userinfo (`@`) or a query string (`?`) is not imported, and any other key of the block (for example `api_key`) is left behind. A profile that already has `model.provider` or `model.default` is not touched, and a second `install` writes nothing. If the imported provider is a plugin enabled in the base config but not in the profile, the installer prints the exact command to run (`hermes --profile relic-gumi plugins install <provider> --enable`); it never installs the plugin itself. `configure` does not import, and `uninstall` leaves the imported `model:` block in place (it is ordinary profile configuration, not part of the plugin).
 
@@ -141,6 +141,14 @@ Disclosed up front, so you can decide before enabling it:
 - **Network:** the Hermes provider you configure, Telegram, local Ollama/ComfyUI/ACE-Step by default, any classifier or media endpoints you explicitly override, and Google media services (Gemini/Lyria) only after the separate opt-in described above.
 - **No self-update, no core patching.** Runtime onboarding uses public `ctx.ask_choice`; without a public free-text API, local setup uses choice-only fallbacks (Skip name, common time zones, default quiet hours). Cron identity uses `cron.execution_identity.current_cron_execution()` and `.job_id`, with a session-name fallback when unavailable. Other Hermes-internal imports remain in operator CLI/installer paths (`install.py`, `manual_cron.py`).
 - **Without a User profile** (fresh install) the plugin registers only onboarding and logs a warning; continuity hooks switch on after `/gumi-setup` and a Hermes restart.
+
+Standalone `relic-gumi install` cannot verify credentials for the target profile:
+it reports **Credentials not checked**, never missing/present based on the
+operator's environment. `relic-gumi configure` now prints setup instructions and
+returns nonzero without creating User artifacts or activating delivery. Use
+`hermes --profile relic-gumi` and `/gumi-setup` inside that Hermes runtime (or the
+profile's Telegram bot). That is where Hermes supplies the credential context.
+A standalone CLI process, even with `HERMES_HOME` set, does not prove that context.
 
 ## Security and credentials
 

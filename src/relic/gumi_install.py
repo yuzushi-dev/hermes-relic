@@ -49,16 +49,14 @@ def _activate_after_onboarding(
     )
 
 
-_TELEGRAM_SETTINGS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS")
+def _print_runtime_setup() -> None:
+    from relic.secrets import credential_setup_commands
 
-
-def _missing_telegram_settings(profile_home: Path) -> list[str]:
-    """Names (never values) of required Telegram settings absent from the active Hermes secret scope."""
-    try:
-        values = ProfileRegistry(hermes_profiles_home=profile_home.parent).load_user_private_env()
-    except (OSError, ValueError):
-        return list(_TELEGRAM_SETTINGS)
-    return [name for name in _TELEGRAM_SETTINGS if not (values.get(name) or "").strip()]
+    print("Credentials not checked: standalone CLI has no verified target-profile Hermes scope.")
+    print(credential_setup_commands())
+    print("Open Hermes with --profile relic-gumi, then run /gumi-setup there "
+          "to verify credentials, record consent, and activate delivery. "
+          "Restart the affected Hermes gateway after credential changes.")
 
 
 def _telegram_progress_status(user_home: Path) -> str:
@@ -153,35 +151,16 @@ def _install(args: argparse.Namespace) -> int:
         return 0
     print(f"relic-gumi ready: {result.profile_home}")
     print("Next: open Telegram and send /start to your bot")
-    missing = _missing_telegram_settings(result.profile_home)
-    if missing:
-        print("Missing in the active Hermes secret scope: " + ", ".join(missing))
+    _print_runtime_setup()
     return 0
 
 
 def _configure(args: argparse.Namespace) -> int:
-    if args.non_interactive:
-        print("relic-gumi configure requires an interactive terminal.", file=sys.stderr)
-        return 1
-    try:
-        location = discover_hermes_home(hermes_home=args.hermes_home)
-        ensure_profile_is_installer_owned(location.profile_home)
-        _mark_profile_installer_owned(location.profile_home)
-        onboarding = _onboard(location.profile_home.parent)
-        activation = _activate_after_onboarding(onboarding, location.base_home)
-    except RuntimeActivationError as exc:
-        print(f"relic-gumi activation failed: {exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"relic-gumi configure failed: {exc}", file=sys.stderr)
-        return 1
-    if activation is not None:
-        _clear_telegram_activation_error(location.profile_home.parent)
-    if activation is not None and isinstance(getattr(onboarding, "media", None), dict):
-        _print_final_summary(location.profile_home, onboarding, activation)
-    elif activation is not None:
-        _print_delivery_outcome(activation)
-    return 0
+    # A standalone operator process is not the target profile's Hermes runtime.
+    # Never onboard/activate with its ambient credentials, even if HERMES_HOME
+    # happens to name the target: that does not establish a secret scope.
+    _print_runtime_setup()
+    return 1
 
 
 def _uninstall(args: argparse.Namespace) -> int:
@@ -329,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
 
     configure = commands.add_parser(
         "configure",
-        help="Rerun RELIC Gumi User configuration (advanced; normal onboarding happens on Telegram).",
+        help="Show setup instructions; use /gumi-setup inside the target Hermes profile.",
     )
     configure.add_argument("--hermes-home", type=Path, help="Override the Hermes base home.")
     configure.add_argument(

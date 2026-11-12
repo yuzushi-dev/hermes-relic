@@ -492,6 +492,8 @@ def _read_canonical_state(
     configuration = registry.load_user_configuration()
     if configuration is None:
         return None
+    # The host must supply the target profile's Hermes credential context;
+    # constructing this registry does not switch or verify a secret scope.
     return _CanonicalRuntime(
         configuration=configuration,
         private_env=registry.load_user_private_env(),

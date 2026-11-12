@@ -330,7 +330,12 @@ class ProfileRegistry:
         return artifact
 
     def load_user_private_env(self) -> dict[str, str]:
-        """A short-lived active Hermes scope snapshot; never a credential-file read."""
+        """Hermes-resolved snapshot, not credentials for this registry's path.
+
+        A registry path does not establish a Hermes profile scope. Call only
+        inside the target Hermes runtime, not to validate a CLI target profile.
+        Never read credential files here.
+        """
         from relic.secrets import scoped_credentials
 
         return scoped_credentials()

@@ -94,10 +94,10 @@ def test_cli_install_hands_onboarding_off_to_telegram(monkeypatch, tmp_path, cap
 
     assert cli.main(["install"]) == 0
     assert events == ["install"]
-    assert capsys.readouterr().out == (
-        f"relic-gumi ready: {profile_home}\n"
-        "Next: open Telegram and send /start to your bot\n"
-    )
+    out = capsys.readouterr().out
+    assert out.startswith(f"relic-gumi ready: {profile_home}\n")
+    assert "Next: open Telegram and send /start to your bot" in out
+    assert "Credentials not checked" in out and "/gumi-setup" in out
 
 
 def test_cli_install_lists_only_missing_telegram_names(monkeypatch, tmp_path, capsys):
@@ -108,8 +108,8 @@ def test_cli_install_lists_only_missing_telegram_names(monkeypatch, tmp_path, ca
 
     assert cli.main(["install"]) == 0
     out = capsys.readouterr().out
-    assert "Missing in the active Hermes secret scope: TELEGRAM_ALLOWED_USERS\n" in out
-    assert "TELEGRAM_BOT_TOKEN" not in out
+    assert "Credentials not checked" in out
+    assert "Missing in" not in out
     assert "secret-token" not in out
     assert "Next: open Telegram and send /start to your bot" in out
 
@@ -119,9 +119,9 @@ def test_cli_install_missing_env_counts_as_both_missing(monkeypatch, tmp_path, c
     _install_without_onboarding(monkeypatch, profile_home)
 
     assert cli.main(["install"]) == 0
-    assert "Missing in the active Hermes secret scope: TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS\n" in (
-        capsys.readouterr().out
-    )
+    out = capsys.readouterr().out
+    assert "Credentials not checked" in out
+    assert "Missing in" not in out
 
 
 def test_cli_install_unreadable_env_counts_as_both_missing(monkeypatch, tmp_path, capsys):
@@ -135,7 +135,8 @@ def test_cli_install_unreadable_env_counts_as_both_missing(monkeypatch, tmp_path
 
     assert cli.main(["install"]) == 0
     out = capsys.readouterr().out
-    assert "Missing in the active Hermes secret scope: TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_USERS\n" in out
+    assert "Credentials not checked" in out
+    assert "Missing in" not in out
     assert "secret-token" not in out
 
 
@@ -161,7 +162,7 @@ def test_cli_no_start_install_does_not_print_next_step(monkeypatch, tmp_path, ca
 def test_cli_configure_help_marks_it_advanced(capsys):
     with pytest.raises(SystemExit):
         cli.main(["--help"])
-    assert "advanced; normal onboarding happens on Telegram" in " ".join(
+    assert "use /gumi-setup inside the target Hermes profile" in " ".join(
         capsys.readouterr().out.split()
     )
 
@@ -213,49 +214,37 @@ def test_cli_install_failure_never_starts_onboarding(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_cli_configure_reaches_onboarding(monkeypatch, tmp_path):
-    events: list[str] = []
-
-    class UserOnboarding:
-        def __init__(self, registry):
-            assert registry.hermes_profiles_home == tmp_path / "profiles"
-
-        def run(self):
-            events.append("configure")
-            return None
-
-    monkeypatch.setattr(cli, "UserOnboarding", UserOnboarding)
-
-    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 0
-    assert events == ["configure"]
-
-
-def test_cli_configure_cancelled_returns_zero(monkeypatch, tmp_path, capsys):
-    class UserOnboarding:
-        def __init__(self, registry):
-            pass
-
-        def run(self):
-            return None
-
-    monkeypatch.setattr(cli, "UserOnboarding", UserOnboarding)
-
-    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 0
-    assert capsys.readouterr().err == ""
-
-
-def test_cli_configure_onboarding_failure_is_nonzero(monkeypatch, tmp_path, capsys):
-    class UserOnboarding:
-        def __init__(self, registry):
-            pass
-
-        def run(self):
-            raise ValueError("onboarding state is corrupt")
-
-    monkeypatch.setattr(cli, "UserOnboarding", UserOnboarding)
-
+def test_cli_configure_defers_onboarding(monkeypatch, tmp_path, capsys):
+    def forbidden(*args, **kwargs):
+        pytest.fail("standalone CLI must defer to target-profile Hermes")
+    monkeypatch.setattr(cli, "UserOnboarding", forbidden)
     assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 1
-    assert "onboarding state is corrupt" in capsys.readouterr().err
+    output = capsys.readouterr().out
+    assert "Credentials not checked" in output
+    assert "/gumi-setup" in output
+    assert not (tmp_path / "profiles").exists()
+
+
+def test_cli_configure_does_not_prompt(monkeypatch, tmp_path, capsys):
+    def forbidden(*args, **kwargs):
+        pytest.fail("standalone CLI must defer to target-profile Hermes")
+    monkeypatch.setattr(cli, "UserOnboarding", forbidden)
+    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 1
+    output = capsys.readouterr().out
+    assert "Credentials not checked" in output
+    assert "/gumi-setup" in output
+    assert not (tmp_path / "profiles").exists()
+
+
+def test_cli_configure_does_not_read_onboarding_state(monkeypatch, tmp_path, capsys):
+    def forbidden(*args, **kwargs):
+        pytest.fail("standalone CLI must defer to target-profile Hermes")
+    monkeypatch.setattr(cli, "UserOnboarding", forbidden)
+    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 1
+    output = capsys.readouterr().out
+    assert "Credentials not checked" in output
+    assert "/gumi-setup" in output
+    assert not (tmp_path / "profiles").exists()
 
 
 def test_cli_configure_non_interactive_does_not_prompt(monkeypatch, tmp_path):
@@ -289,70 +278,37 @@ def test_cli_reports_expected_installer_errors(monkeypatch, capsys, error):
     assert str(error) in capsys.readouterr().err
 
 
-def test_cli_configure_runs_singleton_user_onboarding(monkeypatch, tmp_path, capsys):
-    calls: list[Path] = []
-
-    class ProfileRegistry:
-        def __init__(self, *, hermes_profiles_home):
-            calls.append(hermes_profiles_home)
-
-    class UserOnboarding:
-        def __init__(self, registry):
-            assert isinstance(registry, ProfileRegistry)
-
-        def run(self):
-            return None
-
-    monkeypatch.setattr(cli, "ProfileRegistry", ProfileRegistry)
-    monkeypatch.setattr(cli, "UserOnboarding", UserOnboarding)
-
-    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 0
-    assert calls == [tmp_path / "profiles"]
-    assert capsys.readouterr().out == ""
-
-
-def test_cli_configure_activates_runtime_after_onboarding(monkeypatch, tmp_path, capsys):
-    events: list[str] = []
-
-    class UserOnboarding:
-        def __init__(self, registry):
-            pass
-
-        def run(self):
-            events.append("onboard")
-            return SimpleNamespace(configuration_path=tmp_path / "config.json")
-
-    def activate_runtime(*, hermes_base_home):
-        events.append("activate")
-        return SimpleNamespace(recurring_active=True, first_message_scheduled=False)
-    monkeypatch.setattr(cli, "UserOnboarding", UserOnboarding)
-    monkeypatch.setattr(cli, "activate_runtime", activate_runtime)
-
-    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 0
-    assert events == ["onboard", "activate"]
-    assert capsys.readouterr().out == (
-        "relic-gumi delivery: recurring check-ins scheduled; first message not scheduled.\n"
-    )
-
-
-def test_cli_configure_reports_activation_failure(monkeypatch, tmp_path, capsys):
-    class UserOnboarding:
-        def __init__(self, registry):
-            pass
-
-        def run(self):
-            return SimpleNamespace(configuration_path=tmp_path / "config.json")
-
-    def activate_runtime(*, hermes_base_home):
-        raise cli.RuntimeActivationError("cron activation failed")
-
-    monkeypatch.setattr(cli, "UserOnboarding", UserOnboarding)
-    monkeypatch.setattr(cli, "activate_runtime", activate_runtime)
-
+def test_cli_configure_does_not_create_singleton_user(monkeypatch, tmp_path, capsys):
+    def forbidden(*args, **kwargs):
+        pytest.fail("standalone CLI must defer to target-profile Hermes")
+    monkeypatch.setattr(cli, "ProfileRegistry", forbidden)
     assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "cron activation failed" in captured.err
+    output = capsys.readouterr().out
+    assert "Credentials not checked" in output
+    assert "/gumi-setup" in output
+    assert not (tmp_path / "profiles").exists()
+
+
+def test_cli_configure_does_not_activate_runtime(monkeypatch, tmp_path, capsys):
+    def forbidden(*args, **kwargs):
+        pytest.fail("standalone CLI must defer to target-profile Hermes")
+    monkeypatch.setattr(cli, "activate_runtime", forbidden)
+    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 1
+    output = capsys.readouterr().out
+    assert "Credentials not checked" in output
+    assert "/gumi-setup" in output
+    assert not (tmp_path / "profiles").exists()
+
+
+def test_cli_configure_does_not_enter_activation(monkeypatch, tmp_path, capsys):
+    def forbidden(*args, **kwargs):
+        pytest.fail("standalone CLI must defer to target-profile Hermes")
+    monkeypatch.setattr(cli, "activate_runtime", forbidden)
+    assert cli.main(["configure", "--hermes-home", str(tmp_path)]) == 1
+    output = capsys.readouterr().out
+    assert "Credentials not checked" in output
+    assert "/gumi-setup" in output
+    assert not (tmp_path / "profiles").exists()
 
 
 def test_cli_configure_final_summary_uses_user_language_and_recovery_command(
@@ -364,7 +320,7 @@ def test_cli_configure_final_summary_uses_user_language_and_recovery_command(
 
     class UserOnboarding:
         def __init__(self, registry):
-            assert registry.hermes_profiles_home == profile_home.parent
+            pass
 
         def run(self):
             return SimpleNamespace(
@@ -384,7 +340,8 @@ def test_cli_configure_final_summary_uses_user_language_and_recovery_command(
         lambda **_kwargs: SimpleNamespace(recurring_active=False, first_message_scheduled=False),
     )
 
-    assert cli.main(["configure", "--hermes-home", str(base_home)]) == 0
+    cli._print_final_summary(profile_home, UserOnboarding(None).run(),
+                             SimpleNamespace(recurring_active=False, first_message_scheduled=False))
     output = capsys.readouterr().out
     assert output == (
         "relic-gumi summary:\n"

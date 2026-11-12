@@ -171,7 +171,7 @@ def test_gemini_is_prompted_only_for_selected_media_and_missing_key_disables_it(
     assert gumi["media"]["images"] == {
         "selected": True,
         "enabled": False,
-        "remediation": "Add a Gemini API key with hermes --profile relic-gumi config set GEMINI_API_KEY.",
+        "remediation": "Add a Gemini API key in Hermes Desktop -> Settings -> Plugins (masked field), then run /gumi-setup.",
     }
     assert gumi["media"]["audio"]["enabled"] is False
     assert gumi["media"]["music"]["enabled"] is False

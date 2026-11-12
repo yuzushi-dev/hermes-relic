@@ -1,4 +1,4 @@
-"""Secret access fails closed instead of falling back to ambient credentials."""
+"""Secret access delegates profile and single-profile semantics to Hermes."""
 import builtins
 import sys
 import types
@@ -215,3 +215,26 @@ def test_scope_error_fails_closed(monkeypatch):
     module.get_secret = denied
     monkeypatch.setitem(sys.modules, "agent.secret_scope", module)
     assert secret_value("GEMINI_API_KEY") == ""
+
+
+def test_setup_instructions_are_executable_and_warn_about_cli_exposure():
+    from relic.secrets import credential_setup_commands
+    text = credential_setup_commands()
+    assert "Hermes Desktop" in text and "Settings -> Plugins" in text
+    assert "masked" in text
+    assert "config set TELEGRAM_BOT_TOKEN <value>" in text
+    assert "shell history" in text and "command line" in text
+    assert "user must run" in text and "Agents must never" in text
+
+
+def test_real_hermes_single_profile_without_scope_uses_process_environment(monkeypatch):
+    scope = pytest.importorskip("agent.secret_scope")
+    from relic.secrets import secret_value
+    token = scope.set_secret_scope(None)
+    multiplex = scope.set_multiplex_context(False)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-single-profile")
+    try:
+        assert secret_value("GEMINI_API_KEY") == "test-single-profile"
+    finally:
+        scope.reset_secret_scope(token)
+        scope.reset_multiplex_context(multiplex)

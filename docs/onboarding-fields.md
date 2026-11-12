@@ -155,8 +155,8 @@ These keep their defaults. They can be added once something reads them.
 ## Never asked in chat
 
 - **Gemini API key.** A key typed into Telegram would stay in the chat
-  history. Run `hermes --profile relic-gumi config set GEMINI_API_KEY`
-  privately in your terminal. Without it,
+  history. Prefer the masked field in Hermes Desktop -> Settings -> Plugins
+  for the `relic-gumi` profile. Without it,
   media you picked stay `selected: true, enabled: false` with a remediation
   note; add the key and run `/gumi-setup` again. Delivery additionally requires
   your explicit `RELIC_ENABLE_GOOGLE_MEDIA=1` in that environment; a key alone
@@ -165,10 +165,15 @@ These keep their defaults. They can be added once something reads them.
   ComfyUI/ACE-Step rendering is local, but Google prompt-generation fallbacks
   mean the same delivery gate covers those branches too. Passive-extraction
   consent (`c_pas`) never enables media or sets this flag.
-- **Telegram credentials.** Configure them privately with Hermes:
-  `hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN`,
-  `hermes --profile relic-gumi config set TELEGRAM_ALLOWED_USERS`, and
-  `hermes --profile relic-gumi config set TELEGRAM_HOME_CHANNEL`.
+- **Telegram credentials.** Prefer Hermes Desktop -> Settings -> Plugins
+  masked fields for `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`, and
+  `TELEGRAM_HOME_CHANNEL` in the `relic-gumi` profile.
+  CLI alternative for any credential: the user must run
+  `hermes --profile relic-gumi config set <NAME> <value>` themselves. The value
+  appears in the command line and may remain in shell history. Agents must
+  never read, print, or pass it. Omitting the value shows usage, not a prompt.
+  Hermes respects the active scope; without scope it may use the process
+  environment in single-profile mode, but raises under multiplexing.
   No values belong in chat. Runtime onboarding reads only the active Hermes
   secret scope and never reads or writes `.env`; CLI onboarding also directs
   you to Hermes instead of collecting secrets. Missing credentials keep the

@@ -85,7 +85,7 @@ The installer no longer asks questions. Onboarding (the psychometric baseline, p
 If an AI agent installs this for you, it follows [AGENTS.md](AGENTS.md). In short, it:
 
 1. installs the package and plugin (`relic-gumi install --hermes-home <path>`);
-2. asks you to configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`, and `TELEGRAM_HOME_CHANNEL` privately through `hermes --profile relic-gumi config set <NAME>` (without putting values in chat);
+2. asks you to configure `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`, and `TELEGRAM_HOME_CHANNEL` through Hermes Desktop -> Settings -> Plugins masked fields (see [Security and credentials](#security-and-credentials));
 3. checks the provider and model the installer imported: `relic-gumi install` copies `model.provider` and `model.default` (and `api_mode` / `base_url` when present) from the base Hermes config into the new profile, never overwriting a model the profile already has and never copying credentials. Only when the base config has no usable model does the agent set them by hand (`hermes --profile relic-gumi config set model.provider ...` and `model.default ...`), and asks you to enter provider credentials privately through Hermes' supported configuration/sign-in flow;
 4. runs `relic-gumi verify --skip-cron` and `hermes --profile relic-gumi gateway status`;
 5. tells you to open Telegram and send `/start` to your bot.
@@ -135,7 +135,7 @@ Disclosed up front, so you can decide before enabling it:
 
 - **Hooks:** `pre_llm_call`, `post_llm_call`, `transform_llm_output` (context injection and the output safety critic, user conversations only) and `pre_gateway_dispatch` (Telegram onboarding). Tools: `gumi_read_canon`, `gumi_write_report`, `relic_continuity_candidate`. Command: `/gumi-setup`.
 - **Files:** state under `$RELIC_HOME` (default `~/.relic`); the installer writes the `relic-gumi` Hermes profile with non-secret templates and cron configuration. It may create an empty private `.env`, but never populates it with credentials.
-- **Credentials:** runtime hooks, onboarding, delivery, and the attribution jury use `agent.secret_scope.get_secret(NAME)` exclusively. They never parse `.env`, `auth.json`, or other credential stores, and never use bare process-environment reads for credentials. Missing APIs or unscoped access fail closed. Detached delivery receives only the active scope snapshot over a private pipe, not credentials in command arguments, logs, or inherited credential environment variables.
+- **Credentials:** runtime hooks, onboarding, delivery, and the attribution jury use `agent.secret_scope.get_secret(NAME)` exclusively. They never parse `.env`, `auth.json`, or other credential stores, and never use bare process-environment reads for credentials. Hermes respects the active profile scope; without a scope, single-profile Hermes may use the process environment, while multiplexing raises `UnscopedSecretError`. Missing APIs and provider errors return no credential. Detached delivery receives only the active scope snapshot over a private pipe, not credentials in command arguments, logs, or inherited credential environment variables.
 - **Scheduled jobs:** the installer adds cron jobs to the profile's `cron/jobs.json` (check-ins, proactive messages). They stay silent until you consent during onboarding.
 - **Processes:** detached delivery subprocesses for scheduled messages; optional local media generation (ComfyUI, ACE-Step) when you enable media.
 - **Network:** the Hermes provider you configure, Telegram, local Ollama/ComfyUI/ACE-Step by default, any classifier or media endpoints you explicitly override, and Google media services (Gemini/Lyria) only after the separate opt-in described above.
@@ -144,15 +144,20 @@ Disclosed up front, so you can decide before enabling it:
 
 ## Security and credentials
 
-Enter credentials privately through Hermes (commands intentionally contain no values):
+Recommended: select the `relic-gumi` profile in **Hermes Desktop -> Settings -> Plugins** and use its **masked** secret fields.
+
+CLI alternative: the **user must run** the commands below themselves, replacing
+`<value>` privately. The value appears in the command line and may remain in shell
+history. Installer agents must never read, print, or pass these values. Commands
+without a value show usage; they do not open a private prompt:
 
 ```bash
-hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN
-hermes --profile relic-gumi config set TELEGRAM_ALLOWED_USERS
-hermes --profile relic-gumi config set TELEGRAM_HOME_CHANNEL
-hermes --profile relic-gumi config set GEMINI_API_KEY
+hermes --profile relic-gumi config set TELEGRAM_BOT_TOKEN <value>
+hermes --profile relic-gumi config set TELEGRAM_ALLOWED_USERS <value>
+hermes --profile relic-gumi config set TELEGRAM_HOME_CHANNEL <value>
+hermes --profile relic-gumi config set GEMINI_API_KEY <value>
 # Only for explicitly configured Ollama Cloud classification:
-hermes --profile relic-gumi config set OLLAMA_API_KEYS
+hermes --profile relic-gumi config set OLLAMA_API_KEYS <value>
 ```
 
 Telegram IDs must be numeric; set the home channel to the chat where you want

@@ -91,7 +91,7 @@ def test_default_gemini_validation_rejects_placeholder_key(tmp_path: Path, monke
     assert state["media"]["images"] == {
         "selected": True,
         "enabled": False,
-        "remediation": "Add a Gemini API key with hermes --profile relic-gumi config set GEMINI_API_KEY.",
+        "remediation": "Add a Gemini API key in Hermes Desktop -> Settings -> Plugins (masked field), then run /gumi-setup.",
     }
     assert not registry.hermes_user_env_path.exists()
 

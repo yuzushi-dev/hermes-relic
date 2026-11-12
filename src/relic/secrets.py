@@ -1,7 +1,9 @@
 """Profile-scoped credentials supplied exclusively by Hermes.
 
-Never fall back to process environment or credential files: under multiplexing
-those may belong to another profile. Resolve on demand, not at import time.
+Delegate scope semantics to Hermes; never read credential files or add a direct
+process-environment fallback. Resolve on demand, not at import time.
+Hermes may use the process environment in single-profile mode without a scope;
+multiplexing without a scope raises UnscopedSecretError.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ SECRET_NAMES = (
 
 
 def secret_value(name: str) -> str:
-    """Return a scoped value, or absent when Hermes cannot provide a scope.
+    """Return the Hermes-resolved value, or absent when its API fails.
 
     Older hosts without this API and UnscopedSecretError both fail closed.
     Never log exception details: a credential provider may include secrets.
@@ -35,8 +37,15 @@ def scoped_credentials() -> dict[str, str]:
 
 
 def credential_setup_commands() -> str:
-    """Value-free instructions; credential entry belongs to Hermes, not Relic."""
-    return "\n".join(
-        f"hermes --profile relic-gumi config set {name}"
-        for name in SECRET_NAMES if name != "OLLAMA_API_KEYS"
+    """Instructions only: agents must not receive or execute secret values."""
+    return (
+        "Recommended: Hermes Desktop -> Settings -> Plugins, select relic-gumi "
+        "in the target profile and use the masked secret fields.\n"
+        "CLI alternative: the user must run these commands themselves, replacing "
+        "<value> privately. Values appear in the command line and may remain in "
+        "shell history. Agents must never read, print, or pass these values.\n"
+        + "\n".join(
+            f"hermes --profile relic-gumi config set {name} <value>"
+            for name in SECRET_NAMES
+        )
     )

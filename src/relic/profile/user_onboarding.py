@@ -18,7 +18,7 @@ from relic.profile.registry import ProfileRegistry, UserProfile
 _TELEGRAM_TOKEN = re.compile(r"^\d{6,15}:[A-Za-z0-9_-]{20,}$")
 _TELEGRAM_TARGET = re.compile(r"^-?\d+$")
 _GEMINI_API_KEY = re.compile(r"^AIza[A-Za-z0-9_-]{20,}$")
-_REMEDIATION = "Add a Gemini API key with hermes --profile relic-gumi config set GEMINI_API_KEY."
+_REMEDIATION = "Add a Gemini API key in Hermes Desktop -> Settings -> Plugins (masked field), then run /gumi-setup."
 _QUIET_HOURS = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
